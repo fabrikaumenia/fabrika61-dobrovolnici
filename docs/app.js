@@ -1,7 +1,7 @@
 /* Fabrika 61 – aplikácia pre dobrovoľníkov
    Jeden ES modul bez build kroku. Dáta sú v Supabase, stránka je statická. */
 import { createClient } from "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/+esm";
-import { CFG } from "./config.js?v=5646789b";
+import { CFG } from "./config.js?v=39038c58";
 
 const sb = createClient(CFG.supabaseUrl, CFG.supabaseKey, {
   auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true, flowType: "implicit" },
@@ -948,7 +948,7 @@ function aTerms(){
         ${t.desc ? `<p class="muted" style="font-size:14px;margin-bottom:10px;white-space:pre-line">${esc(t.desc)}</p>` : ""}
         <div class="label" style="margin-bottom:4px">Prihlásení dobrovoľníci</div>
         ${list.length ? list.map(p => { const v = vol(p.vId); if (!v) return ""; return `<div class="att">${avatar(v,"sm")}<div class="grow" style="font-weight:500">${esc(v.first)} ${esc(v.last)}</div>${attPill(p)}
-          ${future ? "" : `${p.status !== "confirmed" ? `<button class="btn btn-primary btn-xs" data-a="attConfirm" data-v="${p.id}">${ico("check")} Bol tu</button>` : ""}
+          ${future ? `<button class="btn btn-xs btn-off" disabled title="Dá sa až v deň termínu">${ico("check")} Bol tu</button><button class="btn btn-xs btn-off" disabled title="Dá sa až v deň termínu">Neprišiel</button>` : `${p.status !== "confirmed" ? `<button class="btn btn-primary btn-xs" data-a="attConfirm" data-v="${p.id}">${ico("check")} Bol tu</button>` : ""}
           ${p.status !== "cancelled" ? `<button class="btn btn-ghost btn-xs" data-a="attCancel" data-v="${p.id}">Neprišiel</button>` : `<button class="btn btn-ghost btn-xs" data-a="attReset" data-v="${p.id}">Vrátiť</button>`}`}</div>`; }).join("")
           : `<p class="empty">Zatiaľ sa nikto neprihlásil.</p>`}
         ${future ? `<p class="muted" style="font-size:12px;margin-top:12px">Účasť potvrdíte a neprihlásených pridáte v deň termínu (${fmtNum(D(t.date))}) alebo neskôr.</p>` : ""}
