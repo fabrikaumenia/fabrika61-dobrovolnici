@@ -31,3 +31,17 @@ dobrovoľníkov pre adminov (náhrada Raynetu).
 
 `config.json` obsahuje len verejné hodnoty (adresa Supabase, verejný kľúč, verejný VAPID kľúč).
 Tajné kľúče sú uložené iba v Supabase ako „secrets“.
+
+## Zálohy
+
+- `.github/workflows/backup.yml` každú nedeľu uloží zašifrovanú zálohu databázy (karta **Actions** → „Týždenná záloha databázy“ → artifact). Zálohy sa držia 90 dní.
+- Potrebuje dve hodnoty v **Settings → Secrets and variables → Actions**: `SUPABASE_DB_PASSWORD` (heslo k databáze zo Supabase) a `BACKUP_PASSPHRASE` (heslo na šifrovanie záloh – bez neho sa záloha nedá otvoriť).
+- `.github/workflows/keepalive.yml` dvakrát týždenne zobudí databázu, aby ju Supabase na bezplatnom pláne neuspal.
+
+### Obnova (pre technika)
+
+```
+gpg -d fabrika61-zaloha-RRRR-MM-DD.tar.gz.gpg > zaloha.tar.gz && tar xzf zaloha.tar.gz
+pg_restore --no-owner --clean --if-exists -d "$DB_URL" public.dump
+pg_restore --no-owner --data-only -d "$DB_URL" auth.dump storage.dump
+```
