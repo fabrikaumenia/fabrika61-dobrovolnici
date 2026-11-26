@@ -79,6 +79,7 @@ function aScan(){
 }
 
 function aTerms(){
+  const et = S.editTerm && term(S.editTerm), etN = et ? signedList(et).length : 0;
   const sorted = DB.terms.slice().sort((a,b) => D(a.date) - D(b.date));
   const up = sorted.filter(t => !isPast(t)), past = sorted.filter(isPast).reverse();
   const card = t => {
@@ -101,20 +102,23 @@ function aTerms(){
           <button class="btn btn-ghost btn-sm" data-a="attAdd" data-v="${t.id}">${ico("plus")} Pridať účastníka</button></div>
           <p class="muted" style="font-size:12px;margin-top:6px">Pre ľudí, ktorí prišli, ale neprihlásili sa cez aplikáciu. Účasť sa im rovno započíta.</p>` : ""}
         <div class="row" style="margin-top:16px">${del ? `<span style="font-size:13px">Zmazať termín aj všetky prihlásenia?</span><button class="btn btn-xs" style="background:var(--bad);color:#fff" data-a="delTerm" data-v="${t.id}">Zmazať</button><button class="btn btn-ghost btn-xs" data-a="cancelDel">Nechať</button>`
-          : `<button class="btn btn-ghost btn-xs" style="color:var(--bad)" data-a="askDel" data-v="term:${t.id}">${ico("trash")} Zmazať termín</button>`}</div>
+          : `<button class="btn btn-ghost btn-xs" data-a="editTerm" data-v="${t.id}">Upraviť</button><button class="btn btn-ghost btn-xs" style="color:var(--bad)" data-a="askDel" data-v="term:${t.id}">${ico("trash")} Zmazať termín</button>`}</div>
       </div>` : ""}</div>`;
   };
   return `<div class="cols side">
-    <section class="card"><h2 style="font-size:18px;margin-bottom:16px">Nový termín</h2>
-      <form class="stack" data-f="newTerm">
+    <section class="card" id="term-form"><h2 style="font-size:18px;margin-bottom:16px">${et ? "Upraviť termín" : "Nový termín"}</h2>
+      <form class="stack" data-f="${et ? "editTerm" : "newTerm"}">
         <div class="seg"><button type="button" class="${S.newTermType==="shift"?"on":""}" data-a="newTermType" data-v="shift">Šichta</button><button type="button" class="${S.newTermType==="event"?"on":""}" data-a="newTermType" data-v="event">Podujatie</button></div>
-        <div class="field"><label for="nt-title">Názov</label><input class="input" id="nt-title" name="title" placeholder="${S.newTermType==="shift" ? "Napr. Upratovanie skladu" : "Napr. Zimný koncert"}" required></div>
-        <div class="row"><div class="field grow"><label for="nt-date">Dátum</label><input class="input" id="nt-date" name="date" type="date" min="${TODAY_ISO}" value="${iso(addDays(TODAY, 7))}" required></div>
-          <div class="field grow"><label for="nt-time">Čas</label><input class="input" id="nt-time" name="time" value="9:00 – 13:00" required></div></div>
-        <div class="field"><label for="nt-cap">Počet ľudí</label><input class="input" id="nt-cap" name="cap" type="number" min="1" value="10" required></div>
-        <div class="field"><label for="nt-desc">Popis</label><textarea class="input" id="nt-desc" name="desc" placeholder="Čo sa bude robiť, čo si priniesť"></textarea></div>
-        <label class="check"><input type="checkbox" id="nt-push" name="push" checked><span>Poslať dobrovoľníkom upozornenie</span></label>
-        <button class="btn btn-primary btn-block" type="submit">Zverejniť termín</button>
+        <div class="field"><label for="nt-title">Názov</label><input class="input" id="nt-title" name="title" value="${esc(et?.title || "")}" placeholder="${S.newTermType==="shift" ? "Napr. Upratovanie skladu" : "Napr. Zimný koncert"}" required></div>
+        <div class="row"><div class="field grow"><label for="nt-date">Dátum</label><input class="input" id="nt-date" name="date" type="date" ${et ? "" : `min="${TODAY_ISO}"`} value="${et ? et.date : iso(addDays(TODAY, 7))}" required></div>
+          <div class="field grow"><label for="nt-time">Čas</label><input class="input" id="nt-time" name="time" value="${esc(et ? et.time : "9:00 – 13:00")}" required></div></div>
+        <div class="field"><label for="nt-cap">Počet ľudí</label><input class="input" id="nt-cap" name="cap" type="number" min="1" value="${et ? et.cap : 10}" required></div>
+        <div class="field"><label for="nt-desc">Popis</label><textarea class="input" id="nt-desc" name="desc" placeholder="Čo sa bude robiť, čo si priniesť">${esc(et?.desc || "")}</textarea></div>
+        ${et ? `<label class="check"><input type="checkbox" id="nt-notify" name="notify" ${etN ? "checked" : "disabled"}><span>Upozorniť prihlásených na zmenu${etN ? ` (${etN})` : " (nikto nie je prihlásený)"}</span></label>`
+          : `<label class="check"><input type="checkbox" id="nt-push" name="push" checked><span>Poslať dobrovoľníkom upozornenie</span></label>
+        ${targetPicker()}`}
+        <button class="btn btn-primary btn-block" type="submit">${et ? "Uložiť zmeny" : "Zverejniť termín"}</button>
+        ${et ? `<button class="btn btn-ghost btn-block" type="button" data-a="cancelEditTerm">Zrušiť úpravu</button>` : ""}
       </form></section>
     <div class="stack-lg">
       <section><div class="section-h"><h2>Nadchádzajúce</h2></div><div class="list">${up.map(card).join("") || `<div class="empty">Žiadne.</div>`}</div></section>
@@ -178,6 +182,7 @@ function aNews(){
           <input type="file" id="np-photos" accept="image/*" multiple hidden data-c="draftPhotos">
           ${S.draftPhotos.length ? `<div class="photos" style="--n:${Math.min(S.draftPhotos.length,4)};margin:6px 0 0">${S.draftPhotos.map(p => `<img src="${p}" alt="" style="border-radius:8px">`).join("")}</div>` : ""}</div>
         <label class="check"><input type="checkbox" id="np-push" name="push" ${S.newsKind==="help"?"checked":""}><span>Poslať dobrovoľníkom upozornenie</span></label>
+        ${targetPicker()}
         <button class="btn btn-primary btn-block" type="submit">Zverejniť</button>
       </form></section>
     <section><div class="section-h"><h2>Zverejnené</h2></div><div class="stack">${DB.news.map(n => { const key = "news:" + n.id;
@@ -188,3 +193,22 @@ function aNews(){
   </div>`;
 }
 
+
+/* komu poslať upozornenie */
+function targetCount(){
+  const t = S.tgt;
+  const match = DB.vols.filter(v => v.status !== "Bývalý" && v.pushEnabled && (t.mode === "all" ||
+    ((!t.help.length || t.help.some(h => v.help.includes(h))) && (!t.when.length || t.when.some(w => v.when.includes(w))))));
+  return {match:match.length, dev:match.filter(v => DB.subs?.[v.id]).length};
+}
+function targetPicker(){
+  const t = S.tgt, n = targetCount();
+  const chip = (k, o) => `<button type="button" class="chip ${t[k].includes(o) ? "on" : ""}" aria-pressed="${t[k].includes(o)}" data-a="tgtChip" data-k="${k}" data-v="${esc(o)}">${esc(o)}</button>`;
+  return `<div class="stack" style="gap:8px;padding-left:28px">
+    <div class="seg"><button type="button" class="${t.mode === "all" ? "on" : ""}" data-a="tgtMode" data-v="all">Všetkým</button><button type="button" class="${t.mode === "sel" ? "on" : ""}" data-a="tgtMode" data-v="sel">Vybraným</button></div>
+    ${t.mode === "sel" ? `<div class="label">Ako pomáhajú · aspoň jedno z</div><div class="chips">${OPT.help.map(o => chip("help", o)).join("")}</div>
+      <div class="label">Kedy môžu</div><div class="chips">${OPT.when.map(o => chip("when", o)).join("")}</div>` : ""}
+    <p class="muted fs13">Upozornenie dostane <b>${n.dev}</b> ${pl(n.dev,"dobrovoľník","dobrovoľníci","dobrovoľníkov")} so zapnutými upozorneniami.${n.match > n.dev ? ` Ďalší ${n.match - n.dev} by sa hodili, ale upozornenia si ešte nezapli.` : ""}</p>
+  </div>`;
+}
+const targetOpts = kind => ({kind, ...(S.tgt.mode === "sel" ? {filter:{help:S.tgt.help, when:S.tgt.when}} : {})});

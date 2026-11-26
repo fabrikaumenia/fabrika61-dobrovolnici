@@ -272,7 +272,8 @@ function renderDrawer(){
     <section class="dsec"><h3>Nastavenia a súhlasy</h3>
       <div class="row"><label for="role-sel" class="grow">Rola v aplikácii</label><select class="input" id="role-sel" style="width:auto;height:38px" data-c="role"><option value="volunteer" ${v.role === "volunteer" ? "selected" : ""}>Dobrovoľník</option><option value="admin" ${v.role === "admin" ? "selected" : ""}>Admin</option></select></div>
       <div class="row" style="margin-top:10px"><label for="prior" class="grow">Šichty z minulých rokov</label><input class="input num" id="prior" type="number" min="0" style="width:90px;height:38px" value="${v.prior}" data-c="prior"></div>
-      ${kv([["Súhlas GDPR", v.gdprAt ? `udelený ${fmtNum(D(v.gdprAt))}` : "chýba"], ["Fotky z podujatí", v.photoOk ? "súhlasí" : "nesúhlasí"]])}
+      ${kv([["Súhlas GDPR", v.gdprAt ? `udelený ${fmtNum(D(v.gdprAt))}` : "chýba"], ["Fotky z podujatí", v.photoOk ? "súhlasí" : "nesúhlasí"],
+        ["Upozornenia", !v.pushEnabled ? "vypnul/a si ich" : DB.subs?.[v.id] ? `zapnuté (${DB.subs[v.id]} ${pl(DB.subs[v.id],"zariadenie","zariadenia","zariadení")})` : "ešte ich nepovolil/a v telefóne"]])}
       <div style="margin-top:16px">${S.confirmDel === delKey ? `<p class="fs13" style="margin-bottom:8px">Vymazať ${esc(v.first)} ${esc(v.last)} aj všetky jeho údaje? Počty účastí na termínoch sa zachovajú bez mena. Nedá sa to vrátiť.</p>
         <div class="row"><button class="btn btn-sm" style="background:var(--bad);color:#fff" data-a="delVol" data-v="${v.id}">Vymazať natrvalo</button><button class="btn btn-ghost btn-sm" data-a="cancelDel">Nechať</button></div>`
         : `<button class="btn btn-ghost btn-sm" style="color:var(--bad)" data-a="askDel" data-v="${delKey}">${ico("trash")} Vymazať údaje (žiadosť podľa GDPR)</button>`}</div></section>

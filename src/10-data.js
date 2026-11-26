@@ -8,7 +8,7 @@ const ARR_FIELDS = new Set(["when","part","freq","channel","help","hobby","sourc
 function vFromRow(r){
   const v = {id:r.id, uid:r.user_id, code:r.code, email:r.email, photo:r.photo_url || null, status:r.status, role:r.role, prior:r.prior_count || 0,
     origin:r.origin || "", registered:(r.created_at || "").slice(0, 10), since:+(r.created_at || "0").slice(0, 4),
-    gdprAt:r.gdpr_consent_at ? r.gdpr_consent_at.slice(0, 10) : "", tags:[], notes:""};
+    gdprAt:r.gdpr_consent_at ? r.gdpr_consent_at.slice(0, 10) : "", tags:[], notes:"", pushEnabled:r.push_enabled !== false};
   for (const [a, b] of FORM_MAP) v[a] = ARR_FIELDS.has(a) ? (r[b] || []) : a === "photoOk" ? !!r[b] : (r[b] ?? "");
   return v;
 }
@@ -42,8 +42,10 @@ async function loadData(){
     admin ? sb.from("partner_pins").select("*") : Promise.resolve({data:[]}),
     sb.rpc("term_counts"),
     sb.rpc("month_leaders"),
+    admin ? sb.from("push_subscriptions").select("volunteer_id") : Promise.resolve({data:[]}),
   ]);
-  const [terms, parts, partners, benefits, uses, news, vols, vadmin, pins, counts, vom] = q.map(must);
+  const [terms, parts, partners, benefits, uses, news, vols, vadmin, pins, counts, vom, subs] = q.map(must);
+  DB.subs = subs.reduce((m, s) => (m[s.volunteer_id] = (m[s.volunteer_id] || 0) + 1, m), {});
   DB.terms = terms.map(tFromRow);
   DB.parts = parts.map(pFromRow);
   const pinMap = Object.fromEntries(pins.map(p => [p.partner_id, p.pin]));
@@ -93,24 +95,39 @@ async function initPush(){
     S.pushOn = !!sub;
   } catch (e) { console.warn("SW", e); }
 }
-async function enablePush(){
-  if (!swReg || !("PushManager" in window) || !("Notification" in window)){
-    throw new Error(isIOS && !isStandalone() ? "ios-home" : "unsupported");
-  }
-  const perm = await Notification.requestPermission();
-  if (perm !== "granted") throw new Error("denied");
-  const sub = await swReg.pushManager.subscribe({userVisibleOnly:true, applicationServerKey:b64ToU8(CFG.vapidPublicKey)});
+const pushSupported = () => !!swReg && "PushManager" in window && "Notification" in window;
+async function subscribeDevice(){
+  let sub = await swReg.pushManager.getSubscription();
+  if (!sub) sub = await swReg.pushManager.subscribe({userVisibleOnly:true, applicationServerKey:b64ToU8(CFG.vapidPublicKey)});
   const j = sub.toJSON();
   must(await sb.from("push_subscriptions").upsert({volunteer_id:S.me, endpoint:j.endpoint, p256dh:j.keys.p256dh, auth:j.keys.auth}, {onConflict:"endpoint"}));
-  S.pushOn = true;
+  S.pushOn = true; S.pushAsk = false;
+}
+// Po prihlásení: upozornenia sú predvolene zapnuté. Ak už prehliadač dovolil, prihlási zariadenie potichu; inak ponúkne tlačidlo.
+async function autoPush(){
+  const m = vol(S.me); S.pushAsk = false;
+  if (!m || !m.pushEnabled) { S.pushOn = false; return; }
+  if (!pushSupported()){ S.pushIosHint = isIOS && !isStandalone(); return; }
+  if (Notification.permission === "granted"){ try { await subscribeDevice(); } catch (e){ console.warn(e); } return; }
+  if (Notification.permission === "default"){ let dismissed = false; try { dismissed = localStorage.getItem("f61-push-later") === "1"; } catch (e){} S.pushAsk = !dismissed; }
+}
+async function enablePush(){
+  if (!pushSupported()){
+    throw new Error(isIOS && !isStandalone() ? "ios-home" : "unsupported");
+  }
+  if (!vol(S.me).pushEnabled){ must(await sb.from("volunteers").update({push_enabled:true}).eq("id", S.me)); vol(S.me).pushEnabled = true; }
+  const perm = await Notification.requestPermission();
+  if (perm !== "granted") throw new Error("denied");
+  await subscribeDevice();
 }
 async function disablePush(){
+  must(await sb.from("volunteers").update({push_enabled:false}).eq("id", S.me)); vol(S.me).pushEnabled = false;
   const sub = await swReg?.pushManager?.getSubscription();
   if (sub){ await sb.from("push_subscriptions").delete().eq("endpoint", sub.endpoint); await sub.unsubscribe(); }
   S.pushOn = false;
 }
-async function sendPush(title, body){
-  const { data, error } = await sb.functions.invoke("send-push", {body:{title, body}});
+async function sendPush(title, body, opts = {}){
+  const { data, error } = await sb.functions.invoke("send-push", {body:{title, body, ...opts}});
   if (error) throw error;
   return data?.sent ?? 0;
 }

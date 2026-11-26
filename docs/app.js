@@ -1,7 +1,7 @@
 /* Fabrika 61 – aplikácia pre dobrovoľníkov
    Jeden ES modul bez build kroku. Dáta sú v Supabase, stránka je statická. */
 import { createClient } from "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/+esm";
-import { CFG } from "./config.js?v=dc71747c";
+import { CFG } from "./config.js?v=f8dbff87";
 
 const sb = createClient(CFG.supabaseUrl, CFG.supabaseKey, {
   auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true, flowType: "implicit" },
@@ -42,6 +42,7 @@ const I = {
   grid:'<rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/>',
   people:'<circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c1-3.5 3.5-5.5 6.5-5.5s5.5 2 6.5 5.5M16 4.5a3.5 3.5 0 0 1 0 7M18 14.5c1.8.7 3 2.6 3.5 5.5"/>',
   news:'<rect x="3" y="4" width="18" height="16" rx="2.5"/><path d="M7 9h10M7 13h10M7 17h6"/>',
+  bell:'<path d="M6 16v-5a6 6 0 1 1 12 0v5l2 2H4z"/><path d="M10 21h4"/>',
   shield:'<path d="M12 3 4 6v6c0 4.5 3.4 8.3 8 9 4.6-.7 8-4.5 8-9V6z"/>',
 };
 const ico = (n, cls = "ico") => `<svg class="${cls}" viewBox="0 0 24 24" aria-hidden="true">${I[n]}</svg>`;
@@ -54,9 +55,9 @@ const S = {
   vtab:"home", termView:"upcoming", termFilter:"all",
   atab:"overview", openTerm:null, confirmDel:null, selVol:null, peopleQ:"",
   scanVol:null, scanTerm:null, newsKind:"info", newTermType:"shift", draftPhotos:[],
-  pushOn:false, toast:null, busy:0,
+  pushOn:false, pushAsk:false, pushIosHint:false, toast:null, busy:0, tgt:{mode:"all", help:[], when:[]},
   form:null, flt:null, sort:{k:"year", dir:-1}, showFilters:false, exportOpen:false, exportKind:"vols", exportCols:null, copyText:null,
-  voucher:null, pin:"", pinErr:null, lockUntil:{}, justUsed:null, showPins:{}, editPin:null,
+  voucher:null, pin:"", pinErr:null, lockUntil:{}, justUsed:null, showPins:{}, editPin:null, editTerm:null,
 };
 
 /* ---------- data layer: Supabase rows <-> app objects ---------- */
@@ -69,7 +70,7 @@ const ARR_FIELDS = new Set(["when","part","freq","channel","help","hobby","sourc
 function vFromRow(r){
   const v = {id:r.id, uid:r.user_id, code:r.code, email:r.email, photo:r.photo_url || null, status:r.status, role:r.role, prior:r.prior_count || 0,
     origin:r.origin || "", registered:(r.created_at || "").slice(0, 10), since:+(r.created_at || "0").slice(0, 4),
-    gdprAt:r.gdpr_consent_at ? r.gdpr_consent_at.slice(0, 10) : "", tags:[], notes:""};
+    gdprAt:r.gdpr_consent_at ? r.gdpr_consent_at.slice(0, 10) : "", tags:[], notes:"", pushEnabled:r.push_enabled !== false};
   for (const [a, b] of FORM_MAP) v[a] = ARR_FIELDS.has(a) ? (r[b] || []) : a === "photoOk" ? !!r[b] : (r[b] ?? "");
   return v;
 }
@@ -103,8 +104,10 @@ async function loadData(){
     admin ? sb.from("partner_pins").select("*") : Promise.resolve({data:[]}),
     sb.rpc("term_counts"),
     sb.rpc("month_leaders"),
+    admin ? sb.from("push_subscriptions").select("volunteer_id") : Promise.resolve({data:[]}),
   ]);
-  const [terms, parts, partners, benefits, uses, news, vols, vadmin, pins, counts, vom] = q.map(must);
+  const [terms, parts, partners, benefits, uses, news, vols, vadmin, pins, counts, vom, subs] = q.map(must);
+  DB.subs = subs.reduce((m, s) => (m[s.volunteer_id] = (m[s.volunteer_id] || 0) + 1, m), {});
   DB.terms = terms.map(tFromRow);
   DB.parts = parts.map(pFromRow);
   const pinMap = Object.fromEntries(pins.map(p => [p.partner_id, p.pin]));
@@ -154,24 +157,39 @@ async function initPush(){
     S.pushOn = !!sub;
   } catch (e) { console.warn("SW", e); }
 }
-async function enablePush(){
-  if (!swReg || !("PushManager" in window) || !("Notification" in window)){
-    throw new Error(isIOS && !isStandalone() ? "ios-home" : "unsupported");
-  }
-  const perm = await Notification.requestPermission();
-  if (perm !== "granted") throw new Error("denied");
-  const sub = await swReg.pushManager.subscribe({userVisibleOnly:true, applicationServerKey:b64ToU8(CFG.vapidPublicKey)});
+const pushSupported = () => !!swReg && "PushManager" in window && "Notification" in window;
+async function subscribeDevice(){
+  let sub = await swReg.pushManager.getSubscription();
+  if (!sub) sub = await swReg.pushManager.subscribe({userVisibleOnly:true, applicationServerKey:b64ToU8(CFG.vapidPublicKey)});
   const j = sub.toJSON();
   must(await sb.from("push_subscriptions").upsert({volunteer_id:S.me, endpoint:j.endpoint, p256dh:j.keys.p256dh, auth:j.keys.auth}, {onConflict:"endpoint"}));
-  S.pushOn = true;
+  S.pushOn = true; S.pushAsk = false;
+}
+// Po prihlásení: upozornenia sú predvolene zapnuté. Ak už prehliadač dovolil, prihlási zariadenie potichu; inak ponúkne tlačidlo.
+async function autoPush(){
+  const m = vol(S.me); S.pushAsk = false;
+  if (!m || !m.pushEnabled) { S.pushOn = false; return; }
+  if (!pushSupported()){ S.pushIosHint = isIOS && !isStandalone(); return; }
+  if (Notification.permission === "granted"){ try { await subscribeDevice(); } catch (e){ console.warn(e); } return; }
+  if (Notification.permission === "default"){ let dismissed = false; try { dismissed = localStorage.getItem("f61-push-later") === "1"; } catch (e){} S.pushAsk = !dismissed; }
+}
+async function enablePush(){
+  if (!pushSupported()){
+    throw new Error(isIOS && !isStandalone() ? "ios-home" : "unsupported");
+  }
+  if (!vol(S.me).pushEnabled){ must(await sb.from("volunteers").update({push_enabled:true}).eq("id", S.me)); vol(S.me).pushEnabled = true; }
+  const perm = await Notification.requestPermission();
+  if (perm !== "granted") throw new Error("denied");
+  await subscribeDevice();
 }
 async function disablePush(){
+  must(await sb.from("volunteers").update({push_enabled:false}).eq("id", S.me)); vol(S.me).pushEnabled = false;
   const sub = await swReg?.pushManager?.getSubscription();
   if (sub){ await sb.from("push_subscriptions").delete().eq("endpoint", sub.endpoint); await sub.unsubscribe(); }
   S.pushOn = false;
 }
-async function sendPush(title, body){
-  const { data, error } = await sb.functions.invoke("send-push", {body:{title, body}});
+async function sendPush(title, body, opts = {}){
+  const { data, error } = await sb.functions.invoke("send-push", {body:{title, body, ...opts}});
   if (error) throw error;
   return data?.sent ?? 0;
 }
@@ -292,8 +310,15 @@ function vHome(m){
   const cells = Array.from({length:9}, (_, i) => `<i class="${i < n ? "on" : ""}"></i>`).join("");
   const labs = Array.from({length:9}, (_, i) => `<span>${[3,5,7,9].includes(i + 1) ? "Ú" + ([3,5,7,9].indexOf(i + 1) + 1) : ""}</span>`).join("");
   const iWin = winners.some(w => w.id === m.id);
+  let iosLater = false; try { iosLater = localStorage.getItem("f61-ios-later") === "1"; } catch (e){}
+  const pushCard = S.pushAsk ? `<section class="card stack" style="gap:10px"><div class="row" style="gap:10px">${ico("bell")}<b>Zapni si upozornenia</b></div>
+      <p class="muted fs13">Dáme ti vedieť o nových šichtách a podujatiach a deň vopred ti pripomenieme termín, na ktorý si prihlásený/á. Vypnúť ich môžeš kedykoľvek v profile.</p>
+      <div class="row" style="flex-wrap:wrap"><button class="btn btn-primary btn-sm" data-a="pushYes">Zapnúť upozornenia</button><button class="linkbtn" data-a="pushLater">Teraz nie</button></div></section>`
+    : S.pushIosHint && m.pushEnabled && !iosLater ? `<section class="card stack" style="gap:10px"><div class="row" style="gap:10px">${ico("bell")}<b>Pridaj si aplikáciu na plochu</b></div>
+      <p class="muted fs13">Na iPhone ti upozornenia na nové šichty a pripomienky chodia, len keď aplikáciu otvoríš z plochy. V Safari ťukni na Zdieľať a zvoľ Pridať na plochu.</p>
+      <button class="linkbtn" style="align-self:flex-start" data-a="iosLater">Rozumiem</button></section>` : "";
   return `<div class="pagehead"><h1>Ahoj, ${esc(m.nick || m.first)}</h1></div>
-  <div class="stack-lg">
+  <div class="stack-lg">${pushCard}
     <section class="card">
       <div class="label">Rok ${YEAR}</div>
       <div class="row between" style="align-items:flex-end;margin-top:10px">
@@ -389,7 +414,7 @@ function vBenefits(m){
 function vProfile(m){
   const pushHint = isIOS && !isStandalone()
     ? "Na iPhone fungujú upozornenia, keď si aplikáciu pridáš na plochu: v Safari ťukni na Zdieľať a zvoľ Pridať na plochu. Potom ju otvor z plochy."
-    : "Pošleme ti upozornenie na nové šichty, podujatia a výzvy o pomoc.";
+    : "Nové šichty, podujatia, výzvy o pomoc, pripomienka deň pred termínom a potvrdenie účasti.";
   return `<div class="pagehead"><h1>Profil</h1></div>
   <div class="stack-lg">
     <section class="stack" style="align-items:center;text-align:center">
@@ -415,7 +440,7 @@ function vProfile(m){
     </section>
     <section class="list">
       <div class="row between"><div class="grow"><div style="font-weight:500">Upozornenia</div><div class="muted" style="font-size:13px">Nové šichty, podujatia a výzvy o pomoc</div></div>
-        <button class="switch ${S.pushOn ? "on" : ""}" role="switch" aria-checked="${S.pushOn}" aria-label="Upozornenia" data-a="togglePush"></button></div>
+        <button class="switch ${S.pushOn && m.pushEnabled ? "on" : ""}" role="switch" aria-checked="${S.pushOn && m.pushEnabled}" aria-label="Upozornenia" data-a="togglePush"></button></div>
       <div class="muted" style="font-size:13px">${pushHint}</div>
     </section>
     <button class="btn btn-ghost btn-block" data-a="logout">${ico("out")} Odhlásiť sa</button>
@@ -742,7 +767,8 @@ function renderDrawer(){
     <section class="dsec"><h3>Nastavenia a súhlasy</h3>
       <div class="row"><label for="role-sel" class="grow">Rola v aplikácii</label><select class="input" id="role-sel" style="width:auto;height:38px" data-c="role"><option value="volunteer" ${v.role === "volunteer" ? "selected" : ""}>Dobrovoľník</option><option value="admin" ${v.role === "admin" ? "selected" : ""}>Admin</option></select></div>
       <div class="row" style="margin-top:10px"><label for="prior" class="grow">Šichty z minulých rokov</label><input class="input num" id="prior" type="number" min="0" style="width:90px;height:38px" value="${v.prior}" data-c="prior"></div>
-      ${kv([["Súhlas GDPR", v.gdprAt ? `udelený ${fmtNum(D(v.gdprAt))}` : "chýba"], ["Fotky z podujatí", v.photoOk ? "súhlasí" : "nesúhlasí"]])}
+      ${kv([["Súhlas GDPR", v.gdprAt ? `udelený ${fmtNum(D(v.gdprAt))}` : "chýba"], ["Fotky z podujatí", v.photoOk ? "súhlasí" : "nesúhlasí"],
+        ["Upozornenia", !v.pushEnabled ? "vypnul/a si ich" : DB.subs?.[v.id] ? `zapnuté (${DB.subs[v.id]} ${pl(DB.subs[v.id],"zariadenie","zariadenia","zariadení")})` : "ešte ich nepovolil/a v telefóne"]])}
       <div style="margin-top:16px">${S.confirmDel === delKey ? `<p class="fs13" style="margin-bottom:8px">Vymazať ${esc(v.first)} ${esc(v.last)} aj všetky jeho údaje? Počty účastí na termínoch sa zachovajú bez mena. Nedá sa to vrátiť.</p>
         <div class="row"><button class="btn btn-sm" style="background:var(--bad);color:#fff" data-a="delVol" data-v="${v.id}">Vymazať natrvalo</button><button class="btn btn-ghost btn-sm" data-a="cancelDel">Nechať</button></div>`
         : `<button class="btn btn-ghost btn-sm" style="color:var(--bad)" data-a="askDel" data-v="${delKey}">${ico("trash")} Vymazať údaje (žiadosť podľa GDPR)</button>`}</div></section>
@@ -907,6 +933,7 @@ function aScan(){
 }
 
 function aTerms(){
+  const et = S.editTerm && term(S.editTerm), etN = et ? signedList(et).length : 0;
   const sorted = DB.terms.slice().sort((a,b) => D(a.date) - D(b.date));
   const up = sorted.filter(t => !isPast(t)), past = sorted.filter(isPast).reverse();
   const card = t => {
@@ -929,20 +956,23 @@ function aTerms(){
           <button class="btn btn-ghost btn-sm" data-a="attAdd" data-v="${t.id}">${ico("plus")} Pridať účastníka</button></div>
           <p class="muted" style="font-size:12px;margin-top:6px">Pre ľudí, ktorí prišli, ale neprihlásili sa cez aplikáciu. Účasť sa im rovno započíta.</p>` : ""}
         <div class="row" style="margin-top:16px">${del ? `<span style="font-size:13px">Zmazať termín aj všetky prihlásenia?</span><button class="btn btn-xs" style="background:var(--bad);color:#fff" data-a="delTerm" data-v="${t.id}">Zmazať</button><button class="btn btn-ghost btn-xs" data-a="cancelDel">Nechať</button>`
-          : `<button class="btn btn-ghost btn-xs" style="color:var(--bad)" data-a="askDel" data-v="term:${t.id}">${ico("trash")} Zmazať termín</button>`}</div>
+          : `<button class="btn btn-ghost btn-xs" data-a="editTerm" data-v="${t.id}">Upraviť</button><button class="btn btn-ghost btn-xs" style="color:var(--bad)" data-a="askDel" data-v="term:${t.id}">${ico("trash")} Zmazať termín</button>`}</div>
       </div>` : ""}</div>`;
   };
   return `<div class="cols side">
-    <section class="card"><h2 style="font-size:18px;margin-bottom:16px">Nový termín</h2>
-      <form class="stack" data-f="newTerm">
+    <section class="card" id="term-form"><h2 style="font-size:18px;margin-bottom:16px">${et ? "Upraviť termín" : "Nový termín"}</h2>
+      <form class="stack" data-f="${et ? "editTerm" : "newTerm"}">
         <div class="seg"><button type="button" class="${S.newTermType==="shift"?"on":""}" data-a="newTermType" data-v="shift">Šichta</button><button type="button" class="${S.newTermType==="event"?"on":""}" data-a="newTermType" data-v="event">Podujatie</button></div>
-        <div class="field"><label for="nt-title">Názov</label><input class="input" id="nt-title" name="title" placeholder="${S.newTermType==="shift" ? "Napr. Upratovanie skladu" : "Napr. Zimný koncert"}" required></div>
-        <div class="row"><div class="field grow"><label for="nt-date">Dátum</label><input class="input" id="nt-date" name="date" type="date" min="${TODAY_ISO}" value="${iso(addDays(TODAY, 7))}" required></div>
-          <div class="field grow"><label for="nt-time">Čas</label><input class="input" id="nt-time" name="time" value="9:00 – 13:00" required></div></div>
-        <div class="field"><label for="nt-cap">Počet ľudí</label><input class="input" id="nt-cap" name="cap" type="number" min="1" value="10" required></div>
-        <div class="field"><label for="nt-desc">Popis</label><textarea class="input" id="nt-desc" name="desc" placeholder="Čo sa bude robiť, čo si priniesť"></textarea></div>
-        <label class="check"><input type="checkbox" id="nt-push" name="push" checked><span>Poslať dobrovoľníkom upozornenie</span></label>
-        <button class="btn btn-primary btn-block" type="submit">Zverejniť termín</button>
+        <div class="field"><label for="nt-title">Názov</label><input class="input" id="nt-title" name="title" value="${esc(et?.title || "")}" placeholder="${S.newTermType==="shift" ? "Napr. Upratovanie skladu" : "Napr. Zimný koncert"}" required></div>
+        <div class="row"><div class="field grow"><label for="nt-date">Dátum</label><input class="input" id="nt-date" name="date" type="date" ${et ? "" : `min="${TODAY_ISO}"`} value="${et ? et.date : iso(addDays(TODAY, 7))}" required></div>
+          <div class="field grow"><label for="nt-time">Čas</label><input class="input" id="nt-time" name="time" value="${esc(et ? et.time : "9:00 – 13:00")}" required></div></div>
+        <div class="field"><label for="nt-cap">Počet ľudí</label><input class="input" id="nt-cap" name="cap" type="number" min="1" value="${et ? et.cap : 10}" required></div>
+        <div class="field"><label for="nt-desc">Popis</label><textarea class="input" id="nt-desc" name="desc" placeholder="Čo sa bude robiť, čo si priniesť">${esc(et?.desc || "")}</textarea></div>
+        ${et ? `<label class="check"><input type="checkbox" id="nt-notify" name="notify" ${etN ? "checked" : "disabled"}><span>Upozorniť prihlásených na zmenu${etN ? ` (${etN})` : " (nikto nie je prihlásený)"}</span></label>`
+          : `<label class="check"><input type="checkbox" id="nt-push" name="push" checked><span>Poslať dobrovoľníkom upozornenie</span></label>
+        ${targetPicker()}`}
+        <button class="btn btn-primary btn-block" type="submit">${et ? "Uložiť zmeny" : "Zverejniť termín"}</button>
+        ${et ? `<button class="btn btn-ghost btn-block" type="button" data-a="cancelEditTerm">Zrušiť úpravu</button>` : ""}
       </form></section>
     <div class="stack-lg">
       <section><div class="section-h"><h2>Nadchádzajúce</h2></div><div class="list">${up.map(card).join("") || `<div class="empty">Žiadne.</div>`}</div></section>
@@ -1006,6 +1036,7 @@ function aNews(){
           <input type="file" id="np-photos" accept="image/*" multiple hidden data-c="draftPhotos">
           ${S.draftPhotos.length ? `<div class="photos" style="--n:${Math.min(S.draftPhotos.length,4)};margin:6px 0 0">${S.draftPhotos.map(p => `<img src="${p}" alt="" style="border-radius:8px">`).join("")}</div>` : ""}</div>
         <label class="check"><input type="checkbox" id="np-push" name="push" ${S.newsKind==="help"?"checked":""}><span>Poslať dobrovoľníkom upozornenie</span></label>
+        ${targetPicker()}
         <button class="btn btn-primary btn-block" type="submit">Zverejniť</button>
       </form></section>
     <section><div class="section-h"><h2>Zverejnené</h2></div><div class="stack">${DB.news.map(n => { const key = "news:" + n.id;
@@ -1016,6 +1047,25 @@ function aNews(){
   </div>`;
 }
 
+
+/* komu poslať upozornenie */
+function targetCount(){
+  const t = S.tgt;
+  const match = DB.vols.filter(v => v.status !== "Bývalý" && v.pushEnabled && (t.mode === "all" ||
+    ((!t.help.length || t.help.some(h => v.help.includes(h))) && (!t.when.length || t.when.some(w => v.when.includes(w))))));
+  return {match:match.length, dev:match.filter(v => DB.subs?.[v.id]).length};
+}
+function targetPicker(){
+  const t = S.tgt, n = targetCount();
+  const chip = (k, o) => `<button type="button" class="chip ${t[k].includes(o) ? "on" : ""}" aria-pressed="${t[k].includes(o)}" data-a="tgtChip" data-k="${k}" data-v="${esc(o)}">${esc(o)}</button>`;
+  return `<div class="stack" style="gap:8px;padding-left:28px">
+    <div class="seg"><button type="button" class="${t.mode === "all" ? "on" : ""}" data-a="tgtMode" data-v="all">Všetkým</button><button type="button" class="${t.mode === "sel" ? "on" : ""}" data-a="tgtMode" data-v="sel">Vybraným</button></div>
+    ${t.mode === "sel" ? `<div class="label">Ako pomáhajú · aspoň jedno z</div><div class="chips">${OPT.help.map(o => chip("help", o)).join("")}</div>
+      <div class="label">Kedy môžu</div><div class="chips">${OPT.when.map(o => chip("when", o)).join("")}</div>` : ""}
+    <p class="muted fs13">Upozornenie dostane <b>${n.dev}</b> ${pl(n.dev,"dobrovoľník","dobrovoľníci","dobrovoľníkov")} so zapnutými upozorneniami.${n.match > n.dev ? ` Ďalší ${n.match - n.dev} by sa hodili, ale upozornenia si ešte nezapli.` : ""}</p>
+  </div>`;
+}
+const targetOpts = kind => ({kind, ...(S.tgt.mode === "sel" ? {filter:{help:S.tgt.help, when:S.tgt.when}} : {})});
 
 /* ---------- render ---------- */
 const root = document.getElementById("root");
@@ -1036,8 +1086,12 @@ function render(keepScroll = true){
   else if (S.screen === "admin" && S.exportOpen) sheet = renderExport();
   else if (S.screen === "admin" && S.atab === "people" && S.selVol && vol(S.selVol)) sheet = renderDrawer();
   document.body.classList.toggle("sheet-open", !!sheet);
+  const keep = {};
+  if (!S.formReset) document.querySelectorAll("#root form[data-f] [id]:not([data-fk]):not([data-c])").forEach(el => { keep[el.id] = el.type === "checkbox" ? el.checked : el.value; });
+  S.formReset = false;
   root.innerHTML = main + sheet + (S.busy ? `<div class="busybar" aria-hidden="true"></div>` : "") + (S.toast ? `<div class="toast" role="status">${esc(S.toast)}</div>` : "");
   document.body.classList.toggle("has-tabs", S.screen === "vol" && !sheet);
+  for (const [id, val] of Object.entries(keep)){ const el = document.getElementById(id); if (!el || el.type === "file") continue; if (el.type === "checkbox") el.checked = val; else el.value = val; }
   const panel = document.querySelector(".drawer, .sheet");
   if (S.panelTop){ S.panelTop = false; if (panel) panel.scrollTop = 0; else window.scrollTo(0, 0); }
   else { if (keepScroll) window.scrollTo(0, y); if (panel && kindOf(panel) === panelKind) panel.scrollTop = panelY; }
@@ -1117,7 +1171,12 @@ const A = {
     must(await sb.from("participations").insert({volunteer_id:S.me, term_id:t.id, status:"rsvp", source:"app"}));
     await refresh(); toast(`Si prihlásený: ${t.title}`); },
   unrsvp: async el => { must(await sb.from("participations").delete().eq("volunteer_id", S.me).eq("term_id", el.dataset.v).eq("status", "rsvp")); await refresh(); toast("Prihlásenie zrušené"); },
-  togglePush: async () => { if (S.pushOn){ await disablePush(); toast("Upozornenia vypnuté"); } else { await enablePush(); toast("Upozornenia zapnuté"); } },
+  togglePush: async () => { if (S.pushOn && me().pushEnabled){ await disablePush(); toast("Upozornenia vypnuté"); } else { await enablePush(); toast("Upozornenia zapnuté"); } },
+  pushYes: async () => { await enablePush(); toast("Upozornenia zapnuté"); },
+  pushLater: () => { S.pushAsk = false; try { localStorage.setItem("f61-push-later", "1"); } catch (e){} },
+  iosLater: () => { try { localStorage.setItem("f61-ios-later", "1"); } catch (e){} },
+  tgtMode: el => { S.tgt.mode = el.dataset.v; },
+  tgtChip: el => { const a = S.tgt[el.dataset.k], i = a.indexOf(el.dataset.v); if (i >= 0) a.splice(i, 1); else a.push(el.dataset.v); },
   openVoucher: el => { S.voucher = el.dataset.v; S.pin = ""; S.pinErr = null; S.justUsed = null; },
   closeVoucher: () => { S.voucher = null; S.pin = ""; S.pinErr = null; S.justUsed = null; },
   pinKey: el => {
@@ -1146,22 +1205,27 @@ const A = {
   askDel: el => { S.confirmDel = el.dataset.v; },
   cancelDel: () => { S.confirmDel = null; },
   newTermType: el => { S.newTermType = el.dataset.v; },
+  editTerm: el => { const x = term(el.dataset.v); S.editTerm = x.id; S.newTermType = x.type; S.formReset = true; S.confirmDel = null; render(); document.getElementById("term-form")?.scrollIntoView({block:"start", behavior:"smooth"}); return "skip"; },
+  cancelEditTerm: () => { S.editTerm = null; S.newTermType = "shift"; S.formReset = true; },
   newsKind: el => { S.newsKind = el.dataset.v; },
   openTerm: el => { S.openTerm = S.openTerm === el.dataset.v ? null : el.dataset.v; S.confirmDel = null; },
 
   // scanner & attendance
   startScan: () => { S.scanVol = null; render(); startScan(); return "skip"; },
   scanConfirm: async () => {
-    const p = myPart(S.scanVol, S.scanTerm);
+    const p = myPart(S.scanVol, S.scanTerm), before = yearCount(S.scanVol);
     if (p) must(await sb.from("participations").update({status:"confirmed", source:p.source === "app" ? "app" : "qr", decided_at:new Date().toISOString()}).eq("id", p.id));
     else must(await sb.from("participations").insert({volunteer_id:S.scanVol, term_id:S.scanTerm, status:"confirmed", source:"qr", decided_at:new Date().toISOString()}));
-    await refresh(); toast(`Účasť započítaná. ${vol(S.scanVol).first} má ${sichty(yearCount(S.scanVol))} tento rok.`); },
-  attConfirm: async el => { must(await sb.from("participations").update({status:"confirmed", decided_at:new Date().toISOString()}).eq("id", el.dataset.v)); await refresh(); },
+    await refresh(); toast(`Účasť započítaná. ${vol(S.scanVol).first} má ${sichty(yearCount(S.scanVol))} tento rok.`);
+    notifyConfirm(S.scanVol, term(S.scanTerm)?.title, before); },
+  attConfirm: async el => { const p = DB.parts.find(x => x.id === el.dataset.v), before = yearCount(p.vId);
+    must(await sb.from("participations").update({status:"confirmed", decided_at:new Date().toISOString()}).eq("id", p.id)); await refresh();
+    notifyConfirm(p.vId, term(p.termId)?.title, before); },
   attCancel: async el => { must(await sb.from("participations").update({status:"cancelled", decided_at:new Date().toISOString()}).eq("id", el.dataset.v)); await refresh(); },
   attReset: async el => { must(await sb.from("participations").update({status:"rsvp", decided_at:null}).eq("id", el.dataset.v)); await refresh(); },
-  attAdd: async el => { const sel = document.getElementById("add-" + el.dataset.v); if (!sel) return;
+  attAdd: async el => { const sel = document.getElementById("add-" + el.dataset.v); if (!sel) return; const before = yearCount(sel.value);
     must(await sb.from("participations").insert({volunteer_id:sel.value, term_id:el.dataset.v, status:"confirmed", source:"manual", decided_at:new Date().toISOString()}));
-    await refresh(); toast(`${vol(sel.value).first} pridaný ako účastník`); },
+    await refresh(); toast(`${vol(sel.value).first} pridaný ako účastník`); notifyConfirm(sel.value, term(el.dataset.v)?.title, before); },
   delTerm: async el => { const t = term(el.dataset.v); must(await sb.from("terms").delete().eq("id", t.id)); S.confirmDel = null; await refresh(); toast(`Termín „${t.title}“ zmazaný`); },
   delPart: async el => { must(await sb.from("participations").delete().eq("id", el.dataset.v)); S.confirmDel = null; await refresh(); toast("Záznam zmazaný"); },
   delNews: async el => { must(await sb.from("news").delete().eq("id", el.dataset.v)); S.confirmDel = null; await refresh(); toast("Príspevok zmazaný"); },
@@ -1199,6 +1263,16 @@ const A = {
     if (S.scanVol === v.id) S.scanVol = null;
     S.selVol = null; S.confirmDel = null; await refresh(); toast(`Údaje o ${v.first} ${v.last} sú vymazané`); },
 };
+
+async function notifyConfirm(vId, title, before){
+  try {
+    const after = yearCount(vId), tb = tierOf(before), ta = tierOf(after);
+    if (after <= before) return;
+    const up = ta > tb;
+    await sendPush(up ? `Odomkla sa ti úroveň ${ta}!` : `Účasť potvrdená: ${title || "šichta"}`,
+      up ? `Máš ${sichty(after)} tento rok. Pozri si nové benefity v aplikácii.` : `Máš ${sichty(after)} tento rok. Ďakujeme!`, {to:[vId], kind:"confirm"});
+  } catch (e){ console.warn("notify", e); }
+}
 
 async function saveAdminInfo(v, patch){
   const row = {volunteer_id:v.id, tags:patch.tags ?? v.tags, notes:patch.notes ?? v.notes, updated_at:new Date().toISOString()};
@@ -1267,6 +1341,12 @@ document.addEventListener("submit", e => {
   e.preventDefault();
   const fd = Object.fromEntries(new FormData(f));
   run(async () => {
+    await handleSubmit(kind, fd, f);
+    S.formReset = true;
+  });
+});
+async function handleSubmit(kind, fd, f){
+  {
     if (kind === "login"){
       S.authErr = null;
       const { error } = await sb.auth.signInWithPassword({email:fd.email.trim().toLowerCase(), password:fd.pass});
@@ -1285,15 +1365,22 @@ document.addEventListener("submit", e => {
     if (kind === "newTerm"){
       const row = must(await sb.from("terms").insert({kind:S.newTermType, title:fd.title.trim(), date:fd.date, time_label:fd.time.trim(), description:fd.desc.trim(), capacity:parseInt(fd.cap, 10) || 10, created_by:S.me}).select().single());
       S.openTerm = row.id; f.reset(); await refresh();
-      if (fd.push){ const n = await sendPush((row.kind === "shift" ? "Nová šichta: " : "Nové podujatie: ") + row.title, `${fmtShort(D(row.date))} · ${row.time_label}. Prihlás sa v aplikácii.`); toast(`Zverejnené. Upozornenie odišlo na ${n} ${pl(n,"zariadenie","zariadenia","zariadení")}.`); }
+      if (fd.push){ const n = await sendPush((row.kind === "shift" ? "Nová šichta: " : "Nové podujatie: ") + row.title, `${fmtShort(D(row.date))} · ${row.time_label}. Prihlás sa v aplikácii.`, targetOpts("term")); S.tgt = {mode:"all", help:[], when:[]}; toast(`Zverejnené. Upozornenie odišlo na ${n} ${pl(n,"zariadenie","zariadenia","zariadení")}.`); }
       else toast("Termín zverejnený");
+    }
+    if (kind === "editTerm"){
+      const id = S.editTerm, people = [...new Set(signedList(term(id)).map(p => p.vId))];
+      must(await sb.from("terms").update({kind:S.newTermType, title:fd.title.trim(), date:fd.date, time_label:fd.time.trim(), description:fd.desc.trim(), capacity:parseInt(fd.cap, 10) || 10}).eq("id", id));
+      S.editTerm = null; S.newTermType = "shift"; S.openTerm = id; await refresh();
+      if (fd.notify && people.length){ const n = await sendPush(`Zmena: ${fd.title.trim()}`, `${fmtShort(D(fd.date))} · ${fd.time.trim()}. Pozri si podrobnosti v aplikácii.`, {to:people, kind:"term-change"}); toast(`Zmeny uložené. Upozornenie odišlo na ${n} ${pl(n,"zariadenie","zariadenia","zariadení")}.`); }
+      else toast("Zmeny uložené");
     }
     if (kind === "newPost"){
       const photos = [];
       for (const ph of S.draftPhotos) photos.push(await uploadImage("news", `${YEAR}/${rid()}.jpg`, ph));
       must(await sb.from("news").insert({kind:S.newsKind, title:fd.title.trim(), body:fd.body.trim(), term_id:fd.term || null, photos, created_by:S.me}));
       S.draftPhotos = []; f.reset(); await refresh();
-      if (fd.push){ const n = await sendPush(fd.title.trim(), fd.body.trim().slice(0, 120)); toast(`Zverejnené. Upozornenie odišlo na ${n} ${pl(n,"zariadenie","zariadenia","zariadení")}.`); }
+      if (fd.push){ const n = await sendPush(fd.title.trim(), fd.body.trim().slice(0, 120), targetOpts("news")); S.tgt = {mode:"all", help:[], when:[]}; toast(`Zverejnené. Upozornenie odišlo na ${n} ${pl(n,"zariadenie","zariadenia","zariadení")}.`); }
       else toast("Príspevok zverejnený");
     }
     if (kind === "setPin"){ const p = partner(S.editPin); must(await sb.from("partner_pins").upsert({partner_id:p.id, pin:fd.pin})); S.editPin = null; S.showPins[p.id] = true; await refresh(); toast(`PIN pre ${p.name} zmenený`); }
@@ -1304,11 +1391,12 @@ document.addEventListener("submit", e => {
     }
     if (kind === "addTag"){ const v = vol(S.selVol), t = fd.tag.trim(); if (t && !v.tags.includes(t)) await saveAdminInfo(v, {tags:[...v.tags, t]}); }
     if (kind === "manualPart"){
+      const before = yearCount(S.selVol);
       must(await sb.from("participations").insert({volunteer_id:S.selVol, term_id:null, label:fd.label.trim(), date:fd.date, status:"confirmed", source:"manual", decided_at:new Date().toISOString()}));
-      await refresh(); toast("Účasť pridaná");
+      await refresh(); toast("Účasť pridaná"); notifyConfirm(S.selVol, fd.label.trim(), before);
     }
-  });
-});
+  }
+}
 
 /* ---------- boot ---------- */
 S.flt = F0();
@@ -1319,6 +1407,7 @@ async function enterApp(){
   if (!m){ S.screen = "auth"; S.authErr = "K tomuto účtu sme nenašli profil dobrovoľníka. Napíš nám prosím."; await sb.auth.signOut(); return; }
   S.me = m.id; S.isAdmin = m.role === "admin";
   await refresh();
+  await swReady; await autoPush();
   if (S.screen !== "vol" && S.screen !== "admin") S.screen = S.isAdmin && location.hash === "#admin" ? "admin" : "vol";
   if (!me().gdprAt) openForm("complete", S.me);
 }
@@ -1338,5 +1427,5 @@ sb.auth.onAuthStateChange((event, session) => {
 document.addEventListener("visibilitychange", () => {
   if (document.visibilityState === "visible" && S.me && Date.now() - lastLoad > 60000 && !S.busy) run(() => refresh());
 });
-initPush().then(() => render());
+const swReady = initPush(); swReady.then(() => render());
 render();

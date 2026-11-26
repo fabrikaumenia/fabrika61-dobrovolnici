@@ -42,6 +42,7 @@ const I = {
   grid:'<rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/>',
   people:'<circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c1-3.5 3.5-5.5 6.5-5.5s5.5 2 6.5 5.5M16 4.5a3.5 3.5 0 0 1 0 7M18 14.5c1.8.7 3 2.6 3.5 5.5"/>',
   news:'<rect x="3" y="4" width="18" height="16" rx="2.5"/><path d="M7 9h10M7 13h10M7 17h6"/>',
+  bell:'<path d="M6 16v-5a6 6 0 1 1 12 0v5l2 2H4z"/><path d="M10 21h4"/>',
   shield:'<path d="M12 3 4 6v6c0 4.5 3.4 8.3 8 9 4.6-.7 8-4.5 8-9V6z"/>',
 };
 const ico = (n, cls = "ico") => `<svg class="${cls}" viewBox="0 0 24 24" aria-hidden="true">${I[n]}</svg>`;
@@ -54,7 +55,7 @@ const S = {
   vtab:"home", termView:"upcoming", termFilter:"all",
   atab:"overview", openTerm:null, confirmDel:null, selVol:null, peopleQ:"",
   scanVol:null, scanTerm:null, newsKind:"info", newTermType:"shift", draftPhotos:[],
-  pushOn:false, toast:null, busy:0,
+  pushOn:false, pushAsk:false, pushIosHint:false, toast:null, busy:0, tgt:{mode:"all", help:[], when:[]},
   form:null, flt:null, sort:{k:"year", dir:-1}, showFilters:false, exportOpen:false, exportKind:"vols", exportCols:null, copyText:null,
-  voucher:null, pin:"", pinErr:null, lockUntil:{}, justUsed:null, showPins:{}, editPin:null,
+  voucher:null, pin:"", pinErr:null, lockUntil:{}, justUsed:null, showPins:{}, editPin:null, editTerm:null,
 };

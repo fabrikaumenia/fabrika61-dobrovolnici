@@ -98,8 +98,15 @@ function vHome(m){
   const cells = Array.from({length:9}, (_, i) => `<i class="${i < n ? "on" : ""}"></i>`).join("");
   const labs = Array.from({length:9}, (_, i) => `<span>${[3,5,7,9].includes(i + 1) ? "Ú" + ([3,5,7,9].indexOf(i + 1) + 1) : ""}</span>`).join("");
   const iWin = winners.some(w => w.id === m.id);
+  let iosLater = false; try { iosLater = localStorage.getItem("f61-ios-later") === "1"; } catch (e){}
+  const pushCard = S.pushAsk ? `<section class="card stack" style="gap:10px"><div class="row" style="gap:10px">${ico("bell")}<b>Zapni si upozornenia</b></div>
+      <p class="muted fs13">Dáme ti vedieť o nových šichtách a podujatiach a deň vopred ti pripomenieme termín, na ktorý si prihlásený/á. Vypnúť ich môžeš kedykoľvek v profile.</p>
+      <div class="row" style="flex-wrap:wrap"><button class="btn btn-primary btn-sm" data-a="pushYes">Zapnúť upozornenia</button><button class="linkbtn" data-a="pushLater">Teraz nie</button></div></section>`
+    : S.pushIosHint && m.pushEnabled && !iosLater ? `<section class="card stack" style="gap:10px"><div class="row" style="gap:10px">${ico("bell")}<b>Pridaj si aplikáciu na plochu</b></div>
+      <p class="muted fs13">Na iPhone ti upozornenia na nové šichty a pripomienky chodia, len keď aplikáciu otvoríš z plochy. V Safari ťukni na Zdieľať a zvoľ Pridať na plochu.</p>
+      <button class="linkbtn" style="align-self:flex-start" data-a="iosLater">Rozumiem</button></section>` : "";
   return `<div class="pagehead"><h1>Ahoj, ${esc(m.nick || m.first)}</h1></div>
-  <div class="stack-lg">
+  <div class="stack-lg">${pushCard}
     <section class="card">
       <div class="label">Rok ${YEAR}</div>
       <div class="row between" style="align-items:flex-end;margin-top:10px">
@@ -195,7 +202,7 @@ function vBenefits(m){
 function vProfile(m){
   const pushHint = isIOS && !isStandalone()
     ? "Na iPhone fungujú upozornenia, keď si aplikáciu pridáš na plochu: v Safari ťukni na Zdieľať a zvoľ Pridať na plochu. Potom ju otvor z plochy."
-    : "Pošleme ti upozornenie na nové šichty, podujatia a výzvy o pomoc.";
+    : "Nové šichty, podujatia, výzvy o pomoc, pripomienka deň pred termínom a potvrdenie účasti.";
   return `<div class="pagehead"><h1>Profil</h1></div>
   <div class="stack-lg">
     <section class="stack" style="align-items:center;text-align:center">
@@ -221,7 +228,7 @@ function vProfile(m){
     </section>
     <section class="list">
       <div class="row between"><div class="grow"><div style="font-weight:500">Upozornenia</div><div class="muted" style="font-size:13px">Nové šichty, podujatia a výzvy o pomoc</div></div>
-        <button class="switch ${S.pushOn ? "on" : ""}" role="switch" aria-checked="${S.pushOn}" aria-label="Upozornenia" data-a="togglePush"></button></div>
+        <button class="switch ${S.pushOn && m.pushEnabled ? "on" : ""}" role="switch" aria-checked="${S.pushOn && m.pushEnabled}" aria-label="Upozornenia" data-a="togglePush"></button></div>
       <div class="muted" style="font-size:13px">${pushHint}</div>
     </section>
     <button class="btn btn-ghost btn-block" data-a="logout">${ico("out")} Odhlásiť sa</button>

@@ -7,8 +7,9 @@ app = re.sub(r'^import .*$', '', app, flags=re.M)
 def patch(a, b):
     global app
     assert a in app, a[:60]; app = app.replace(a, b, 1)
-patch("async function enablePush(){", "async function enablePush(){\n  if (window.__DEMO){ S.pushOn = true; return; }")
-patch("async function disablePush(){", "async function disablePush(){\n  if (window.__DEMO){ S.pushOn = false; return; }")
+patch("async function enablePush(){", "async function enablePush(){\n  if (window.__DEMO){ S.pushOn = true; S.pushAsk = false; vol(S.me).pushEnabled = true; return; }")
+patch("async function autoPush(){", "async function autoPush(){\n  if (window.__DEMO){ S.pushAsk = !S.pushOn; return; }")
+patch("async function disablePush(){", "async function disablePush(){\n  if (window.__DEMO){ S.pushOn = false; vol(S.me).pushEnabled = false; return; }")
 patch("downloadXlsx: () => downloadXlsx(),", 'downloadXlsx: () => { toast("V ukážke sa súbor nesťahuje. Skutočná aplikácia stiahne .xlsx."); },')
 patch("async function startScan(){", 'async function startScan(){\n  if (window.__DEMO){ toast("V ukážke kamera nebeží. Vyber dobrovoľníka ručne."); return; }')
 mock = (ROOT / "demo" / "mock-demo.js").read_text()

@@ -40,7 +40,7 @@ const createClient = (() => {
   const mkVol = o => ({id:uuid(), user_id:null, code:"F61-" + Math.random().toString(16).slice(2, 8).toUpperCase(), first_name:"", last_name:"", nick:null, birthday:null, city:null,
     email:"", phone:null, age_group:null, avail_days:[], avail_days_other:null, day_parts:[], day_parts_other:null, contact_freq:[], contact_freq_other:null, channels:[],
     channels_other:null, social_link:null, help_forms:[], help_other:null, hobbies:[], hobbies_other:null, benefit_ideas:null, sources:[], sources_other:null,
-    photo_consent:true, gdpr_consent_at:nowIso(), photo_url:null, status:"Aktívny", role:"volunteer", prior_count:0, origin:"Google formulár", created_at:nowIso(), ...o});
+    photo_consent:true, gdpr_consent_at:nowIso(), photo_url:null, status:"Aktívny", role:"volunteer", prior_count:0, origin:"Google formulár", push_enabled:true, created_at:nowIso(), ...o});
   const V = (key, first, last, o) => { const v = mkVol({user_id:"u-" + key, first_name:first, last_name:last, email:`${key}@example.sk`, ...o}); T.volunteers.push(v); return v; };
   const vA = V("spravca", "Správca", "Fabriky", {role:"admin", nick:"Admin", city:"Partizánske", phone:"0911 000 100", age_group:"31 – 45", avail_days:["Víkendy"], help_forms:["Produkcia"], hobbies:["Umenie a kultúra"], sources:["Kamaráti, rodina, známi"], birthday:"10. 10.", created_at:"2024-01-10T10:00:00Z"});
   const v1 = V("zuzana", "Zuzana", "Kováčová", {nick:"Zuzka", birthday:"14. 3.", city:"Partizánske", phone:"0911 000 101", age_group:"26 – 30", avail_days:["Víkendy"], day_parts:["Doobeda","Celý deň"], contact_freq:["Vždy, keď budete potrebovať pomoc"], channels:["E-mail","Instagram"], social_link:"instagram.com/zuzka.ukazka", help_forms:["Manuálne práce","Foto / video"], hobbies:["Umenie a kultúra","Cestovanie"], benefit_ideas:"Workshop fotografie pre dobrovoľníkov", sources:["Kamaráti, rodina, známi"], prior_count:14, created_at:"2024-04-12T10:00:00Z"});
@@ -69,6 +69,7 @@ const createClient = (() => {
   const pF = partner("Fabrika 61","Bar, vstup a podujatia vo Fabrike"), pP = partner("Panička – krajčírstvo","Partizánske"), pH = partner("Hvezdáreň Partizánske","Večerné pozorovania");
   const ben = (p, tier, title) => { const b = {id:uuid(), partner_id:p.id, tier, title, active:true, created_at:nowIso()}; T.benefits.push(b); return b; };
   const b1 = ben(pF, 1, "Zľava 20 % na vstupné na podujatia vo Fabrike 61"); ben(pP, 2, "Zľava 10 % na úpravy oblečenia"); const b3 = ben(pH, 3, "Voľný vstup na večerné pozorovanie");
+  [v1, v2, v4, v6].forEach(v => T.push_subscriptions.push({id:uuid(), volunteer_id:v.id, endpoint:"demo-" + v.id, p256dh:"x", auth:"x"}));
   T.benefit_uses.push({id:uuid(), volunteer_id:v4.id, benefit_id:b1.id, partner_id:pF.id, year:YR, used_at:dd(-30) + "T17:20:00Z"}, {id:uuid(), volunteer_id:v4.id, benefit_id:b3.id, partner_id:pH.id, year:YR, used_at:dd(-12) + "T19:05:00Z"});
 
   const ph = [1,2,3,4].map(drawPhoto);
@@ -84,7 +85,7 @@ const createClient = (() => {
   const dateOf = p => p.term_id ? T.terms.find(t => t.id === p.term_id)?.date : p.date;
   const yc = vid => T.participations.filter(p => p.volunteer_id === vid && p.status === "confirmed" && String(dateOf(p)).startsWith(String(YR))).length;
   const RLS = {volunteers:r => isAdm() || r.user_id === session?.user.id, participations:r => isAdm() || r.volunteer_id === myVol()?.id,
-    benefit_uses:r => isAdm() || r.volunteer_id === myVol()?.id, volunteer_admin:() => isAdm(), partner_pins:() => isAdm(), push_subscriptions:r => r.volunteer_id === myVol()?.id};
+    benefit_uses:r => isAdm() || r.volunteer_id === myVol()?.id, volunteer_admin:() => isAdm(), partner_pins:() => isAdm(), push_subscriptions:r => isAdm() || r.volunteer_id === myVol()?.id};
   class Q {
     constructor(t){ this.t = t; this.f = []; this.op = "select"; this.one = null; }
     select(){ return this; } order(){ return this; } limit(){ return this; }
@@ -158,7 +159,7 @@ const createClient = (() => {
   return () => ({
     from: t => new Q(t), rpc, auth,
     storage: {from: () => ({upload: async (path, blob) => { files[path] = URL.createObjectURL(blob); return {data:{}, error:null}; }, getPublicUrl: path => ({data:{publicUrl:files[path] || ""}})})},
-    functions: {invoke: async () => ({data:{sent:T.push_subscriptions.length}, error:null})},
+    functions: {invoke: async (fn, {body}) => { const ok = T.volunteers.filter(v => v.push_enabled && v.status !== "Bývalý" && (!body.to || body.to.includes(v.id)) && (!body.filter?.help?.length || body.filter.help.some(h => v.help_forms.includes(h))) && (!body.filter?.when?.length || body.filter.when.some(w => v.avail_days.includes(w)))).map(v => v.id); return {data:{sent:T.push_subscriptions.filter(s => ok.includes(s.volunteer_id)).length}, error:null}; }},
   });
 })();
 const CFG = {supabaseUrl:"demo", supabaseKey:"demo", vapidPublicKey:""};
