@@ -134,6 +134,7 @@ async function sendPush(title, body, opts = {}){
 
 function errText(e){
   const m = String(e?.message || e || "");
+  if (/v deň termínu/i.test(m)) return "Účasť sa dá potvrdiť až v deň termínu.";
   if (/Invalid login credentials/i.test(m)) return "Nesprávny e-mail alebo heslo.";
   if (/already registered|already been registered/i.test(m)) return "Tento e-mail už je registrovaný. Prihlás sa, alebo si obnov heslo.";
   if (/Email not confirmed/i.test(m)) return "E-mail ešte nie je potvrdený. Klikni na odkaz, ktorý sme ti poslali.";

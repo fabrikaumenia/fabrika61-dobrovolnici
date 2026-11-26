@@ -1,7 +1,7 @@
 /* Fabrika 61 – aplikácia pre dobrovoľníkov
    Jeden ES modul bez build kroku. Dáta sú v Supabase, stránka je statická. */
 import { createClient } from "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/+esm";
-import { CFG } from "./config.js?v=4ed11a35";
+import { CFG } from "./config.js?v=5646789b";
 
 const sb = createClient(CFG.supabaseUrl, CFG.supabaseKey, {
   auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true, flowType: "implicit" },
@@ -196,6 +196,7 @@ async function sendPush(title, body, opts = {}){
 
 function errText(e){
   const m = String(e?.message || e || "");
+  if (/v deň termínu/i.test(m)) return "Účasť sa dá potvrdiť až v deň termínu.";
   if (/Invalid login credentials/i.test(m)) return "Nesprávny e-mail alebo heslo.";
   if (/already registered|already been registered/i.test(m)) return "Tento e-mail už je registrovaný. Prihlás sa, alebo si obnov heslo.";
   if (/Email not confirmed/i.test(m)) return "E-mail ešte nie je potvrdený. Klikni na odkaz, ktorý sme ti poslali.";
@@ -903,11 +904,8 @@ function aOverview(){
 
 function aScan(){
   const v = S.scanVol && vol(S.scanVol);
-  if (!term(S.scanTerm)){
-    const near = DB.terms.slice().sort((a, b) => Math.abs(D(a.date) - TODAY) - Math.abs(D(b.date) - TODAY));
-    S.scanTerm = (near.find(t => t.date === TODAY_ISO) || near[0])?.id || null;
-  }
-  const opts = DB.terms.slice().sort((a, b) => Math.abs(D(a.date) - TODAY) - Math.abs(D(b.date) - TODAY)).slice(0, 30);
+  const opts = DB.terms.filter(t => D(t.date) <= TODAY).sort((a, b) => D(b.date) - D(a.date)).slice(0, 30);
+  if (!opts.some(t => t.id === S.scanTerm)) S.scanTerm = opts[0]?.id || null;
   let detail = "";
   if (v){
     const p = S.scanTerm && myPart(v.id, S.scanTerm);
@@ -917,7 +915,7 @@ function aScan(){
         <select class="input" id="scan-term" data-c="scanTerm">${opts.map(o => `<option value="${o.id}" ${o.id === S.scanTerm ? "selected" : ""}>${fmtShort(D(o.date))} · ${esc(o.title)}</option>`).join("")}</select></div>
         ${p?.status === "confirmed" ? `<div class="row"><span class="pill p-good">${ico("check")} Účasť už je započítaná</span></div>`
           : `<button class="btn btn-accent btn-block" data-a="scanConfirm">${ico("check")} Potvrdiť účasť${p?.status === "rsvp" ? " (bol prihlásený)" : ""}</button>`}</div>`
-        : `<p class="muted">Najprv vytvor termín v karte Termíny.</p>`}
+        : `<p class="muted">Dnes ani v minulosti nie je žiadny termín. Účasť sa dá potvrdiť v deň termínu.</p>`}
       <button class="btn btn-ghost btn-block" data-a="startScan">${ico("scan")} Naskenovať ďalšieho</button>
     </section>`;
   }
@@ -941,6 +939,7 @@ function aTerms(){
     const confirmedN = list.filter(p => p.status === "confirmed").length;
     const others = DB.vols.filter(v => v.status !== "Bývalý" && !list.some(p => p.vId === v.id)).sort((a, b) => a.last.localeCompare(b.last, "sk"));
     const del = S.confirmDel === "term:" + t.id;
+    const future = D(t.date) > TODAY;
     return `<div><div class="row" style="cursor:pointer" data-a="openTerm" data-v="${t.id}">
         <div class="datebox"><b class="num">${D(t.date).getDate()}</b><span>${MONTHS[D(t.date).getMonth()]}</span></div>
         <div class="grow">${typeLabel(t)}<div style="font-weight:600">${esc(t.title)}</div><div class="muted" style="font-size:13px">${esc(t.time)} · ${signedCount(t)}/${t.cap} prihlásených · ${confirmedN} potvrdených</div></div>
@@ -949,11 +948,11 @@ function aTerms(){
         ${t.desc ? `<p class="muted" style="font-size:14px;margin-bottom:10px;white-space:pre-line">${esc(t.desc)}</p>` : ""}
         <div class="label" style="margin-bottom:4px">Prihlásení dobrovoľníci</div>
         ${list.length ? list.map(p => { const v = vol(p.vId); if (!v) return ""; return `<div class="att">${avatar(v,"sm")}<div class="grow" style="font-weight:500">${esc(v.first)} ${esc(v.last)}</div>${attPill(p)}
-          ${p.status !== "confirmed" ? `<button class="btn btn-primary btn-xs" data-a="attConfirm" data-v="${p.id}">${ico("check")} Bol tu</button>` : ""}
-          ${p.status !== "cancelled" ? `<button class="btn btn-ghost btn-xs" data-a="attCancel" data-v="${p.id}">Neprišiel</button>` : `<button class="btn btn-ghost btn-xs" data-a="attReset" data-v="${p.id}">Vrátiť</button>`}</div>`; }).join("")
+          ${future ? "" : `${p.status !== "confirmed" ? `<button class="btn btn-primary btn-xs" data-a="attConfirm" data-v="${p.id}">${ico("check")} Bol tu</button>` : ""}
+          ${p.status !== "cancelled" ? `<button class="btn btn-ghost btn-xs" data-a="attCancel" data-v="${p.id}">Neprišiel</button>` : `<button class="btn btn-ghost btn-xs" data-a="attReset" data-v="${p.id}">Vrátiť</button>`}`}</div>`; }).join("")
           : `<p class="empty">Zatiaľ sa nikto neprihlásil.</p>`}
-        ${others.length && D(t.date) > TODAY ? `<p class="muted" style="font-size:12px;margin-top:12px">Ručne pridať účastníka pôjde v deň termínu (${fmtNum(D(t.date))}) a neskôr.</p>` : ""}
-        ${others.length && D(t.date) <= TODAY ? `<div class="row" style="margin-top:12px;flex-wrap:wrap"><select class="input grow" style="height:38px;min-width:180px" id="add-${t.id}" aria-label="Pridať účastníka">${others.map(v => `<option value="${v.id}">${esc(v.first)} ${esc(v.last)}</option>`).join("")}</select>
+        ${future ? `<p class="muted" style="font-size:12px;margin-top:12px">Účasť potvrdíte a neprihlásených pridáte v deň termínu (${fmtNum(D(t.date))}) alebo neskôr.</p>` : ""}
+        ${others.length && !future ? `<div class="row" style="margin-top:12px;flex-wrap:wrap"><select class="input grow" style="height:38px;min-width:180px" id="add-${t.id}" aria-label="Pridať účastníka">${others.map(v => `<option value="${v.id}">${esc(v.first)} ${esc(v.last)}</option>`).join("")}</select>
           <button class="btn btn-ghost btn-sm" data-a="attAdd" data-v="${t.id}">${ico("plus")} Pridať účastníka</button></div>
           <p class="muted" style="font-size:12px;margin-top:6px">Pre ľudí, ktorí prišli, ale neprihlásili sa cez aplikáciu. Účasť sa im rovno započíta.</p>` : ""}
         <div class="row" style="margin-top:16px">${del ? `<span style="font-size:13px">Zmazať termín aj všetky prihlásenia?</span><button class="btn btn-xs" style="background:var(--bad);color:#fff" data-a="delTerm" data-v="${t.id}">Zmazať</button><button class="btn btn-ghost btn-xs" data-a="cancelDel">Nechať</button>`
