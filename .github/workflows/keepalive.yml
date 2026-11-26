@@ -1,0 +1,15 @@
+# Supabase uspí bezplatný projekt po týždni nečinnosti.
+# Táto úloha ho dvakrát týždenne krátko „zobudí“. Neprenáša žiadne osobné údaje.
+name: Udržiavanie databázy aktívnej
+on:
+  schedule:
+    - cron: "17 6 * * 1,4"
+  workflow_dispatch:
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping Supabase
+        run: |
+          curl -fsS -X POST "https://yvjqasfknlzquvoqcwni.supabase.co/rest/v1/rpc/ping" \
+            -H "apikey: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inl2anFhc2Zrbmx6cXV2b3Fjd25pIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTU2NzIzNzIsImV4cCI6MjExMTI0ODM3Mn0.tuVMiw0UsEpkkqxZsOlexfUdzwFGXX-t-rrcoh0SItk" -H "Content-Type: application/json" -d '{}'
