@@ -1,0 +1,5 @@
+export const CFG = {
+  "supabaseUrl": "https://yvjqasfknlzquvoqcwni.supabase.co",
+  "supabaseKey": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inl2anFhc2Zrbmx6cXV2b3Fjd25pIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTU2NzIzNzIsImV4cCI6MjExMTI0ODM3Mn0.tuVMiw0UsEpkkqxZsOlexfUdzwFGXX-t-rrcoh0SItk",
+  "vapidPublicKey": "BEiMHr9Yj4mj-3I69lWn22eMVlTO7Xo-OcioSJN02kLCKO0UMRamcfZw_dFphj-TEIC7q6pFNeV9Dckbfk9CCiU"
+};
