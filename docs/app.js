@@ -1,7 +1,7 @@
 /* Fabrika 61 – aplikácia pre dobrovoľníkov
    Jeden ES modul bez build kroku. Dáta sú v Supabase, stránka je statická. */
 import { createClient } from "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/+esm";
-import { CFG } from "./config.js?v=b10f82a4";
+import { CFG } from "./config.js?v=6b0857f1";
 
 const sb = createClient(CFG.supabaseUrl, CFG.supabaseKey, {
   auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true, flowType: "implicit" },
@@ -136,7 +136,7 @@ function readFiles(files, cb){
 const dataUrlToBlob = u => fetch(u).then(r => r.blob());
 async function uploadImage(bucket, path, dataUrl){
   const blob = await dataUrlToBlob(dataUrl);
-  must(await sb.storage.from(bucket).upload(path, blob, {contentType:"image/jpeg", upsert:true}));
+  must(await sb.storage.from(bucket).upload(path, blob, {contentType:"image/jpeg", upsert:false}));
   return sb.storage.from(bucket).getPublicUrl(path).data.publicUrl;
 }
 const rid = () => (crypto.randomUUID ? crypto.randomUUID() : String(Date.now()) + Math.random().toString(16).slice(2));
