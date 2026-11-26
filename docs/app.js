@@ -1,7 +1,7 @@
 /* Fabrika 61 – aplikácia pre dobrovoľníkov
    Jeden ES modul bez build kroku. Dáta sú v Supabase, stránka je statická. */
 import { createClient } from "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/+esm";
-import { CFG } from "./config.js?v=f8dbff87";
+import { CFG } from "./config.js?v=4ed11a35";
 
 const sb = createClient(CFG.supabaseUrl, CFG.supabaseKey, {
   auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true, flowType: "implicit" },
@@ -952,7 +952,8 @@ function aTerms(){
           ${p.status !== "confirmed" ? `<button class="btn btn-primary btn-xs" data-a="attConfirm" data-v="${p.id}">${ico("check")} Bol tu</button>` : ""}
           ${p.status !== "cancelled" ? `<button class="btn btn-ghost btn-xs" data-a="attCancel" data-v="${p.id}">Neprišiel</button>` : `<button class="btn btn-ghost btn-xs" data-a="attReset" data-v="${p.id}">Vrátiť</button>`}</div>`; }).join("")
           : `<p class="empty">Zatiaľ sa nikto neprihlásil.</p>`}
-        ${others.length ? `<div class="row" style="margin-top:12px;flex-wrap:wrap"><select class="input grow" style="height:38px;min-width:180px" id="add-${t.id}" aria-label="Pridať účastníka">${others.map(v => `<option value="${v.id}">${esc(v.first)} ${esc(v.last)}</option>`).join("")}</select>
+        ${others.length && D(t.date) > TODAY ? `<p class="muted" style="font-size:12px;margin-top:12px">Ručne pridať účastníka pôjde v deň termínu (${fmtNum(D(t.date))}) a neskôr.</p>` : ""}
+        ${others.length && D(t.date) <= TODAY ? `<div class="row" style="margin-top:12px;flex-wrap:wrap"><select class="input grow" style="height:38px;min-width:180px" id="add-${t.id}" aria-label="Pridať účastníka">${others.map(v => `<option value="${v.id}">${esc(v.first)} ${esc(v.last)}</option>`).join("")}</select>
           <button class="btn btn-ghost btn-sm" data-a="attAdd" data-v="${t.id}">${ico("plus")} Pridať účastníka</button></div>
           <p class="muted" style="font-size:12px;margin-top:6px">Pre ľudí, ktorí prišli, ale neprihlásili sa cez aplikáciu. Účasť sa im rovno započíta.</p>` : ""}
         <div class="row" style="margin-top:16px">${del ? `<span style="font-size:13px">Zmazať termín aj všetky prihlásenia?</span><button class="btn btn-xs" style="background:var(--bad);color:#fff" data-a="delTerm" data-v="${t.id}">Zmazať</button><button class="btn btn-ghost btn-xs" data-a="cancelDel">Nechať</button>`
