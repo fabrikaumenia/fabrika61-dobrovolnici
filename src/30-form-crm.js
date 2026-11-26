@@ -337,7 +337,7 @@ function overviewPeople(){
       <div class="list">${fresh.map(v => `<div class="row" style="cursor:pointer" data-a="openVol" data-v="${v.id}">${avatar(v,"sm")}<div class="grow"><div style="font-weight:500">${esc(v.first)} ${esc(v.last)}</div><div class="muted" style="font-size:13px">${esc(withOther(v,"help").slice(0,2).join(", "))}</div></div><span class="mono muted" style="font-size:12px">${fmtNum(D(v.registered))}</span></div>`).join("") || `<div class="empty">Žiadni noví.</div>`}</div>
       <p class="note" style="margin-top:10px">Ešte nemali prvú účasť. Oplatí sa ich osobne osloviť.</p></section>
     <section><div class="section-h"><h2>Narodeniny v ${MONTHS_LOC[MONTH]}</h2></div>
-      <div class="list">${bdays.map(({v, b}) => `<div class="row" style="cursor:pointer" data-a="openVol" data-v="${v.id}"><span class="mono num" style="width:44px">${b.d}. ${b.m}.</span>${avatar(v,"sm")}<div class="grow">${esc(v.first)} ${esc(v.last)}</div>${b.d === TODAY.getDate() ? '<span class="pill p-accent">Dnes</span>' : b.d < TODAY.getDate() ? '<span class="pill p-muted">Bolo</span>' : ""}</div>`).join("") || `<div class="empty">Tento mesiac nikto.</div>`}</div></section>`;
+      <div class="list">${bdays.map(({v, b}) => `<div class="row" style="cursor:pointer" data-a="openVol" data-v="${v.id}"><span class="mono num" style="flex:none;min-width:64px;white-space:nowrap">${b.d}. ${b.m}.</span>${avatar(v,"sm")}<div class="grow">${esc(v.first)} ${esc(v.last)}</div>${b.d === TODAY.getDate() ? '<span class="pill p-accent">Dnes</span>' : b.d < TODAY.getDate() ? '<span class="pill p-muted">Bolo</span>' : ""}</div>`).join("") || `<div class="empty">Tento mesiac nikto.</div>`}</div></section>`;
 }
 
 let xlsxLoading = null;
