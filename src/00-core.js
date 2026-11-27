@@ -57,5 +57,5 @@ const S = {
   scanVol:null, scanTerm:null, newsKind:"info", newTermType:"shift", draftPhotos:[],
   pushOn:false, pushAsk:false, pushIosHint:false, toast:null, busy:0, tgt:{mode:"all", help:[], when:[]},
   form:null, flt:null, sort:{k:"year", dir:-1}, showFilters:false, exportOpen:false, exportKind:"vols", exportCols:null, copyText:null,
-  voucher:null, pin:"", pinErr:null, lockUntil:{}, justUsed:null, showPins:{}, editPin:null, editTerm:null,
+  voucher:null, pin:"", pinErr:null, lockUntil:{}, justUsed:null, showPins:{}, editPin:null, editTerm:null, editBenefit:null,
 };

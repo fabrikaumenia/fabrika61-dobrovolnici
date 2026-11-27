@@ -126,6 +126,7 @@ function aTerms(){
 }
 
 function aPartners(){
+  const eb = S.editBenefit && DB.benefits.find(b => b.id === S.editBenefit);
   const usedYear = DB.uses.filter(u => D(u.at).getFullYear() === YEAR);
   const card = p => {
     const bs = DB.benefits.filter(b => b.pid === p.id), n = usedYear.filter(u => u.pid === p.id).length, shown = S.showPins[p.id];
@@ -141,19 +142,26 @@ function aPartners(){
              <button class="linkbtn" data-a="newPin" data-v="${p.id}">Vygenerovať nový</button>`}</div>
       <div><div class="label" style="margin:4px 0 2px">Benefity</div>
         ${bs.map(b => { const k = delKey + b.id, cnt = usedYear.filter(u => u.bId === b.id).length;
-          return `<div class="att"><span class="pill p-muted">Ú${b.tier}</span><div class="grow">${esc(b.what)}</div><span class="muted num" style="font-size:13px">${cnt}×</span>
+          return `<div class="att"><span class="pill p-muted">Ú${b.tier}</span><div class="grow">${esc(b.what)}<div class="muted" style="font-size:12px">${limitText(b)}${b.group ? " · vyššia úroveň nahrádza nižšiu" : ""}${b.url && !b.code ? " · chýba zľavový kód" : ""}</div></div><span class="muted num" style="font-size:13px">${cnt}×</span>
+          <button class="btn btn-ghost btn-xs" data-a="editBenefit" data-v="${b.id}">Upraviť</button>
           ${S.confirmDel === k ? `<button class="btn btn-xs" style="background:var(--bad);color:#fff" data-a="delBenefit" data-v="${b.id}">Zmazať</button><button class="btn btn-ghost btn-xs" data-a="cancelDel">Nechať</button>`
             : `<button class="iconbtn" aria-label="Zmazať benefit" data-a="askDel" data-v="${k}">${ico("trash")}</button>`}</div>`; }).join("") || `<p class="empty">Zatiaľ žiadny benefit.</p>`}</div>
     </section>`;
   };
   return `<div class="cols side">
     <div class="stack-lg">
-      <section class="card"><h2 style="font-size:18px;margin-bottom:16px">Nový benefit</h2>
-        <form class="stack" data-f="newBenefit">
-          <div class="field"><label for="nb-pid">Partner</label><select class="input" id="nb-pid" name="pid">${DB.partners.map(p => `<option value="${p.id}">${esc(p.name)}</option>`).join("")}</select></div>
-          <div class="field"><label for="nb-tier">Úroveň</label><select class="input" id="nb-tier" name="tier">${[1,2,3,4].map(t => `<option value="${t}">Úroveň ${t} · od ${THRESH[t]} šichiet</option>`).join("")}</select></div>
-          <div class="field"><label for="nb-what">Čo dobrovoľník dostane</label><input class="input" id="nb-what" name="what" placeholder="Napr. Zľava 15 % na nákup" required></div>
-          <button class="btn btn-primary btn-block" type="submit">Pridať benefit</button>
+      <section class="card" id="benefit-form"><h2 style="font-size:18px;margin-bottom:16px">${eb ? "Upraviť benefit" : "Nový benefit"}</h2>
+        <form class="stack" data-f="${eb ? "editBenefit" : "newBenefit"}">
+          <div class="field"><label for="nb-pid">Partner</label><select class="input" id="nb-pid" name="pid">${DB.partners.map(p => `<option value="${p.id}" ${eb?.pid === p.id ? "selected" : ""}>${esc(p.name)}</option>`).join("")}</select></div>
+          <div class="field"><label for="nb-tier">Úroveň</label><select class="input" id="nb-tier" name="tier">${[1,2,3,4].map(t => `<option value="${t}" ${eb?.tier === t ? "selected" : ""}>Úroveň ${t} · od ${THRESH[t]} šichiet</option>`).join("")}</select></div>
+          <div class="field"><label for="nb-what">Čo dobrovoľník dostane</label><input class="input" id="nb-what" name="what" value="${esc(eb?.what || "")}" placeholder="Napr. Zľava 15 % na nákup" required></div>
+          <div class="field"><label for="nb-max">Koľkokrát za rok</label><select class="input" id="nb-max" name="max">${[["", "Opakovane, bez obmedzenia"], ["1", "Raz za rok"], ["2", "2× za rok"], ["3", "3× za rok"], ["5", "5× za rok"], ["10", "10× za rok"]].map(([v, l]) => `<option value="${v}" ${String(eb?.max || "") === v ? "selected" : ""}>${l}</option>`).join("")}</select></div>
+          ${eb?.group ? `<p class="muted fs13">Tento benefit je súčasťou radu, v ktorom vyššia úroveň nahrádza nižšiu.</p>` : `<div class="field"><label for="nb-up">Je to vyššia verzia iného benefitu?</label><select class="input" id="nb-up" name="upgrade"><option value="">Nie, samostatný benefit</option>${DB.benefits.filter(b => b.id !== eb?.id).map(b => `<option value="${b.id}">Ú${b.tier} · ${esc(pname(b))} · ${esc(b.what)}</option>`).join("")}</select>
+            <span class="muted fs13">Napríklad 30 % zľava, ktorá na vyššej úrovni nahradí 20 %.</span></div>`}
+          <div class="field"><label for="nb-url">Odkaz na e-shop (len pri online zľave)</label><input class="input" id="nb-url" name="url" type="url" value="${esc(eb?.url || "")}" placeholder="https://"></div>
+          <div class="field"><label for="nb-code">Zľavový kód na e-shop</label><input class="input mono" id="nb-code" name="code" value="${esc(eb?.code || "")}" placeholder="Nepovinné"></div>
+          <button class="btn btn-primary btn-block" type="submit">${eb ? "Uložiť benefit" : "Pridať benefit"}</button>
+          ${eb ? `<button class="btn btn-ghost btn-block" type="button" data-a="cancelEditBenefit">Zrušiť úpravu</button>` : ""}
         </form></section>
       <section class="card"><h2 style="font-size:18px;margin-bottom:16px">Nový partner</h2>
         <form class="stack" data-f="newPartner">
@@ -164,7 +172,7 @@ function aPartners(){
         </form></section>
     </div>
     <div class="stack">${DB.partners.map(card).join("")}
-      <p class="note">Ako to funguje: dobrovoľník ukáže voucher v aplikácii a pokladník doň zadá PIN. Po troch nesprávnych pokusoch sa voucher na 5 minút zablokuje.</p></div>
+      <p class="note">Ako to funguje: dobrovoľník ukáže voucher v aplikácii a pokladník doň zadá PIN. Každé použitie sa zapíše. Po troch nesprávnych PINoch sa voucher na 5 minút zablokuje. Pri online zľave dobrovoľník uvidí zľavový kód a odkaz na e-shop.</p></div>
   </div>`;
 }
 

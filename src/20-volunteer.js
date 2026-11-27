@@ -21,11 +21,16 @@ function volunteersOfMonth(){
 const genPin = () => String(Math.floor(Math.random() * 10000)).padStart(4, "0");
 const partner = id => DB.partners.find(p => p.id === id);
 const pname = b => partner(b.pid)?.name || "";
-function useOf(vId, bId){ return DB.uses.find(u => u.vId === vId && u.bId === bId && u.year === YEAR); }
+const usesOf = (vId, bId) => DB.uses.filter(u => u.vId === vId && u.bId === bId && u.year === YEAR).sort((a, b) => b.at.localeCompare(a.at));
+function useOf(vId, bId){ return usesOf(vId, bId)[0]; }
+function supersededBy(vId, b){ if (!b.group) return null; const n = yearCount(vId); return DB.benefits.filter(h => h.group === b.group && h.tier > b.tier && n >= THRESH[h.tier]).sort((a, c) => c.tier - a.tier)[0] || null; }
 function benefitState(vId, b){
-  if (useOf(vId, b.id)) return "used";
-  return yearCount(vId) >= THRESH[b.tier] ? "available" : "locked";
+  if (yearCount(vId) < THRESH[b.tier]) return "locked";
+  if (supersededBy(vId, b)) return "superseded";
+  if (b.max && usesOf(vId, b.id).length >= b.max) return "used";
+  return "available";
 }
+const limitText = b => b.url ? "Online zľava s kódom" : b.max ? (b.max === 1 ? "Raz za rok" : `${b.max}× za rok`) : "Opakovane počas roka";
 function progressText(n){
   const t = tierOf(n);
   if (t === 4) return "Máš najvyššiu úroveň. Všetky benefity sú odomknuté.";
@@ -34,9 +39,11 @@ function progressText(n){
   return (t ? `Úroveň ${t}. ` : "") + `Do úrovne ${t + 1} ti ${verb} ${sichty(miss)}.`;
 }
 const avatar = (v, cls = "") => `<span class="avatar ${cls}">${v.photo ? `<img src="${esc(v.photo)}" alt="">` : esc(initials(v))}</span>`;
-function benefitPill(state, u){
-  if (state === "available") return `<span class="pill p-accent">Dostupný voucher</span>`;
-  if (state === "used") return `<span class="pill p-good">${ico("check")} Použité ${fmtNum(D(u.at))} · ${esc(partner(u.pid)?.name || "")}</span>`;
+function benefitPill(state, u, b, vId){
+  const n = b && vId ? usesOf(vId, b.id).length : 0;
+  if (state === "available") return `<span class="pill p-accent">${b?.url ? "Online zľava" : "Dostupné"}</span>${n ? `<span class="pill p-muted">Použité ${n}× tento rok${b.max ? ` · zostáva ${b.max - n}×` : ""}</span>` : ""}`;
+  if (state === "used") return `<span class="pill p-good">${ico("check")} Použité ${fmtNum(D(u.at))}${b?.max > 1 ? ` · ${b.max}× z ${b.max}` : ""}</span>`;
+  if (state === "superseded") return `<span class="pill p-muted">Nahradené vyššou úrovňou</span>`;
   return "";
 }
 function attPill(p){
@@ -186,15 +193,15 @@ function vTerms(m){
 
 function vBenefits(m){
   const n = yearCount(m.id);
-  return `<div class="pagehead"><h1>Benefity</h1><p>Odomykajú sa podľa počtu šichiet v roku ${YEAR}. Počítadlo sa 1. januára vynuluje, celkový počet ti zostáva v profile. Každý benefit môžeš za rok použiť raz. Pri použití ukážeš voucher a pokladník ho potvrdí svojím PINom.</p></div>
+  return `<div class="pagehead"><h1>Benefity</h1><p>Odomykajú sa podľa počtu šichiet v roku ${YEAR} a platia aj na všetkých vyšších úrovniach. Počítadlo sa 1. januára vynuluje, celkový počet ti zostáva v profile. Pri použití ukážeš voucher a pokladník ho potvrdí svojím PINom. Keď dosiahneš vyššiu úroveň, väčšia zľava nahradí tú menšiu.</p></div>
   <div class="stack-lg">${[1,2,3,4].map(tier => {
     const open = n >= THRESH[tier], miss = THRESH[tier] - n, list = DB.benefits.filter(b => b.tier === tier);
     return `<section><div class="tier-head"><h2>Úroveň ${tier}</h2>
       <span class="label">${open ? "Odomknuté" : `Od ${THRESH[tier]} šichiet · ${pl(miss,"chýba","chýbajú","chýba")} ${miss}`}</span></div>
       <div class="list">${list.map(b => {
         const st = benefitState(m.id, b), u = useOf(m.id, b.id);
-        return `<div class="benefit ${st}"><div><div class="partner">${esc(pname(b))}</div><div class="what">${esc(b.what)}</div></div>
-          ${st === "locked" ? "" : `<div class="state">${benefitPill(st, u)}${st === "available" ? `<button class="btn btn-primary btn-xs" data-a="openVoucher" data-v="${b.id}">Použiť</button>` : ""}</div>`}</div>`;
+        return `<div class="benefit ${st === "superseded" ? "locked" : st}"><div><div class="partner">${esc(pname(b))} · ${limitText(b)}</div><div class="what">${esc(b.what)}</div></div>
+          ${st === "locked" ? "" : `<div class="state">${benefitPill(st, u, b, m.id)}${st === "available" ? `<button class="btn btn-primary btn-xs" data-a="openVoucher" data-v="${b.id}">${b.url ? "Zobraziť kód" : "Použiť"}</button>` : ""}</div>`}</div>`;
       }).join("") || `<div class="empty">Na tejto úrovni zatiaľ nie je žiadny benefit.</div>`}</div></section>`;
   }).join("")}</div>`;
 }
@@ -246,7 +253,7 @@ function qrSvg(text){
 /* ---------- voucher sheet ---------- */
 function renderVoucher(){
   const m = me(), b = DB.benefits.find(x => x.id === S.voucher); if (!b) return "";
-  const p = partner(b.pid), lock = (S.lockUntil[b.id] || 0) - Date.now(), u = S.justUsed;
+  const p = partner(b.pid), lock = (S.lockUntil[b.id] || 0) - Date.now(), u = S.justUsed, online = !!b.url;
   const keys = ["1","2","3","4","5","6","7","8","9","","0","del"];
   return `<div class="sheet" role="dialog" aria-modal="true" aria-label="Voucher"><div class="wrap">
     <div class="row between" style="padding-block:16px 8px"><span class="label">Voucher</span><button class="btn btn-ghost btn-sm" data-a="closeVoucher">${u ? "Hotovo" : "Zavrieť"}</button></div>
@@ -260,7 +267,13 @@ function renderVoucher(){
     ${u ? `<div class="stack" style="align-items:center;text-align:center;padding-block:32px">
         <span class="okmark">${ico("check")}</span><h2 style="font-size:24px">Použité</h2>
         <p class="muted">${fmtNum(D(u.at))} o ${u.time} · ${esc(p?.name)}</p>
-        <p class="muted" style="font-size:13px">Záznam je uložený. Voucher sa už nedá použiť znova.</p></div>`
+        <p class="muted" style="font-size:13px">Záznam je uložený. ${b.max && usesOf(m.id, b.id).length >= b.max ? "Tento rok sa už použiť nedá." : "Zľavu môžeš použiť aj nabudúce."}</p></div>`
+    : online ? `<div class="stack" style="align-items:center;text-align:center;padding-block:28px">
+        ${b.code ? `<div class="label">Zľavový kód</div><div class="mono" style="font-size:28px;letter-spacing:.08em;user-select:all">${esc(b.code)}</div>
+          <button class="btn btn-ghost btn-sm" data-a="copy" data-v="${esc(b.code)}">Kopírovať kód</button>`
+          : `<p class="muted">Kód zatiaľ nie je zadaný. Napíš nám a pošleme ti ho.</p>`}
+        <a class="btn btn-primary" href="${esc(b.url)}" target="_blank" rel="noopener">Otvoriť e-shop</a>
+        <p class="muted fs13">Kód zadáš pri objednávke na e-shope.</p></div>`
     : lock > 0 ? `<div class="stack" style="align-items:center;text-align:center;padding-block:32px">
         <h2 style="font-size:20px">Voucher je dočasne zablokovaný</h2>
         <p class="muted">Trikrát nesprávny PIN. Skús znova o <b class="mono num" id="lockcd">${fmtCd(lock)}</b>.</p></div>`

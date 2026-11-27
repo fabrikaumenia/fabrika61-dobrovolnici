@@ -66,10 +66,13 @@ const createClient = (() => {
   P(v3, past[4], "cancelled", "app");
 
   const partner = (name, place) => { const p = {id:uuid(), name, place, created_at:nowIso()}; T.partners.push(p); T.partner_pins.push({partner_id:p.id, pin:"1234"}); return p; };
-  const pF = partner("Fabrika 61","Bar, vstup a podujatia vo Fabrike"), pP = partner("Panička – krajčírstvo","Partizánske"), pH = partner("Hvezdáreň Partizánske","Večerné pozorovania");
-  const ben = (p, tier, title) => { const b = {id:uuid(), partner_id:p.id, tier, title, active:true, created_at:nowIso()}; T.benefits.push(b); return b; };
-  const b1 = ben(pF, 1, "Zľava 20 % na vstupné na podujatia vo Fabrike 61"); ben(pP, 2, "Zľava 10 % na úpravy oblečenia"); const b3 = ben(pH, 3, "Voľný vstup na večerné pozorovanie");
-  [v1, v2, v4, v6].forEach(v => T.push_subscriptions.push({id:uuid(), volunteer_id:v.id, endpoint:"demo-" + v.id, p256dh:"x", auth:"x"}));
+  const pF = partner("Fabrika 61","Vstupné, bar a merch Fabrika umenia"), pP = partner("Panička – krajčírstvo","Partizánske"), pH = partner("Hvezdáreň Partizánske","Večerné pozorovania"),
+    pE = partner("Epurshoes.sk","E-shop s obuvou"), pM = partner("Majuni41","Kozmetický salón"), pL = partner("LAJF is Burger","Burgre"), pN = partner("Neapolka","Bošany");
+  const ben = (p, tier, title, o = {}) => { const b = {id:uuid(), partner_id:p.id, tier, title, active:true, group_key:null, max_uses:null, online_url:null, online_code:null, created_at:nowIso(), ...o}; T.benefits.push(b); return b; };
+  const b1 = ben(pF, 1, "Zľava 20 % na podujatia vo Fabrike 61", {group_key:"pod"}); [30,40,50].forEach((z, i) => ben(pF, i + 2, `Zľava ${z} % na podujatia vo Fabrike 61`, {group_key:"pod"}));
+  [20,30,40,50].forEach((z, i) => ben(pF, i + 1, `Zľava ${z} % na merch Fabrika umenia`, {group_key:"merch"}));
+  ben(pE, 1, "Zľava 10 % na nákup", {online_url:"https://epurshoes.sk", online_code:"FABRIKA10"}); ben(pM, 1, "Zľava 10 %"); ben(pP, 2, "Zľava 10 % na úpravy oblečenia");
+  const b3 = ben(pH, 3, "Voľný vstup na večerné pozorovanie", {max_uses:1}); ben(pL, 4, "Voucher na „kombo v cene burgra“", {max_uses:1}); ben(pN, 4, "Zľava 20 %");
   T.benefit_uses.push({id:uuid(), volunteer_id:v4.id, benefit_id:b1.id, partner_id:pF.id, year:YR, used_at:dd(-30) + "T17:20:00Z"}, {id:uuid(), volunteer_id:v4.id, benefit_id:b3.id, partner_id:pH.id, year:YR, used_at:dd(-12) + "T19:05:00Z"});
 
   const ph = [1,2,3,4].map(drawPhoto);
@@ -134,7 +137,9 @@ const createClient = (() => {
     if (fn === "redeem_voucher"){
       const v = myVol(), b = T.benefits.find(x => x.id === a.p_benefit), pin = T.partner_pins.find(x => x.partner_id === b.partner_id)?.pin;
       if (yc(v.id) < [0,3,5,7,9][b.tier]) return {data:{ok:false, error:"tier"}, error:null};
-      if (T.benefit_uses.some(u => u.volunteer_id === v.id && u.benefit_id === b.id && u.year === YR)) return {data:{ok:false, error:"used"}, error:null};
+      const n = yc(v.id);
+      if (b.group_key && T.benefits.some(h => h.group_key === b.group_key && h.tier > b.tier && n >= [0,3,5,7,9][h.tier])) return {data:{ok:false, error:"superseded"}, error:null};
+      if (b.max_uses && T.benefit_uses.filter(u => u.volunteer_id === v.id && u.benefit_id === b.id && u.year === YR).length >= b.max_uses) return {data:{ok:false, error:"used"}, error:null};
       if (v._lock && v._lock > Date.now()) return {data:{ok:false, error:"locked", locked_until:new Date(v._lock).toISOString()}, error:null};
       if (a.p_pin !== pin){ v._f = (v._f || 0) + 1; if (v._f >= 3){ v._f = 0; v._lock = Date.now() + 300000; return {data:{ok:false, error:"locked", locked_until:new Date(v._lock).toISOString()}, error:null}; } return {data:{ok:false, error:"wrong_pin", left:3 - v._f}, error:null}; }
       v._f = 0; T.benefit_uses.push({id:uuid(), volunteer_id:v.id, benefit_id:b.id, partner_id:b.partner_id, year:YR, used_at:nowIso()});

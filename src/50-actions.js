@@ -121,11 +121,12 @@ const A = {
       try {
         const r = must(await sb.rpc("redeem_voucher", {p_benefit:S.voucher, p_pin:S.pin}));
         S.pin = "";
-        if (r.ok){ await refresh(); S.justUsed = useOf(S.me, S.voucher) || {at:TODAY_ISO, time:new Date().toTimeString().slice(0, 5), pid:DB.benefits.find(b => b.id === S.voucher)?.pid}; }
+        if (r.ok){ await refresh(); S.justUsed = {at:TODAY_ISO, time:new Date().toTimeString().slice(0, 5), pid:DB.benefits.find(b => b.id === S.voucher)?.pid}; }
         else if (r.error === "wrong_pin") S.pinErr = `Nesprávny PIN. ${r.left === 1 ? "Zostáva 1 pokus" : `Zostávajú ${r.left} pokusy`}.`;
         else if (r.error === "locked") S.lockUntil[S.voucher] = new Date(r.locked_until).getTime();
-        else if (r.error === "used"){ await refresh(); S.pinErr = "Tento benefit si už tento rok použil/a."; }
+        else if (r.error === "used"){ await refresh(); S.pinErr = "Tento benefit si už tento rok vyčerpal/a."; }
         else if (r.error === "tier") S.pinErr = "Na tento benefit ešte nemáš dosť šichiet.";
+        else if (r.error === "superseded") S.pinErr = "Máš už vyššiu úroveň. Použi väčšiu zľavu.";
         else S.pinErr = "Voucher sa nepodarilo overiť.";
       } finally { S.pinBusy = false; S.pin = ""; }
     })();
@@ -166,6 +167,8 @@ const A = {
   editPin: el => { S.editPin = el.dataset.v || null; },
   newPin: async el => { const p = partner(el.dataset.v), pin = genPin();
     must(await sb.from("partner_pins").upsert({partner_id:p.id, pin})); await refresh(); S.showPins[p.id] = true; toast(`Nový PIN pre ${p.name}: ${pin}`); },
+  editBenefit: el => { S.editBenefit = el.dataset.v; S.formReset = true; S.confirmDel = null; render(); document.getElementById("benefit-form")?.scrollIntoView({block:"start", behavior:"smooth"}); return "skip"; },
+  cancelEditBenefit: () => { S.editBenefit = null; S.formReset = true; },
   delBenefit: async el => { must(await sb.from("benefits").update({active:false}).eq("id", el.dataset.v)); S.confirmDel = null; await refresh(); toast("Benefit odstránený z ponuky"); },
 
   // CRM
@@ -315,7 +318,16 @@ async function handleSubmit(kind, fd, f){
       else toast("Príspevok zverejnený");
     }
     if (kind === "setPin"){ const p = partner(S.editPin); must(await sb.from("partner_pins").upsert({partner_id:p.id, pin:fd.pin})); S.editPin = null; S.showPins[p.id] = true; await refresh(); toast(`PIN pre ${p.name} zmenený`); }
-    if (kind === "newBenefit"){ must(await sb.from("benefits").insert({tier:parseInt(fd.tier, 10), partner_id:fd.pid, title:fd.what.trim()})); f.reset(); await refresh(); toast("Benefit pridaný. Dobrovoľníci ho uvidia hneď."); }
+    if (kind === "newBenefit" || kind === "editBenefit"){
+      let group = null;
+      if (fd.upgrade){ const base = DB.benefits.find(b => b.id === fd.upgrade); group = base.group || ("g-" + rid().slice(0, 8));
+        if (!base.group) must(await sb.from("benefits").update({group_key:group}).eq("id", base.id)); }
+      else if (kind === "editBenefit") group = DB.benefits.find(b => b.id === S.editBenefit)?.group || null;
+      const row = {tier:parseInt(fd.tier, 10), partner_id:fd.pid, title:fd.what.trim(), max_uses:fd.max ? parseInt(fd.max, 10) : null,
+        group_key:group, online_url:(fd.url || "").trim() || null, online_code:(fd.code || "").trim() || null};
+      if (kind === "editBenefit"){ must(await sb.from("benefits").update(row).eq("id", S.editBenefit)); S.editBenefit = null; await refresh(); toast("Benefit uložený"); }
+      else { must(await sb.from("benefits").insert(row)); await refresh(); toast("Benefit pridaný. Dobrovoľníci ho uvidia hneď."); }
+    }
     if (kind === "newPartner"){
       const p = must(await sb.from("partners").insert({name:fd.name.trim(), place:(fd.where || "").trim()}).select().single()), pin = genPin();
       must(await sb.from("partner_pins").insert({partner_id:p.id, pin})); f.reset(); await refresh(); S.showPins[p.id] = true; toast(`Partner pridaný. PIN: ${pin}`);

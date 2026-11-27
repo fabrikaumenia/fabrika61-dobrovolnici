@@ -50,7 +50,7 @@ async function loadData(){
   DB.parts = parts.map(pFromRow);
   const pinMap = Object.fromEntries(pins.map(p => [p.partner_id, p.pin]));
   DB.partners = partners.map(p => ({id:p.id, name:p.name, where:p.place, pin:pinMap[p.id] || ""}));
-  DB.benefits = benefits.map(b => ({id:b.id, tier:b.tier, pid:b.partner_id, what:b.title}));
+  DB.benefits = benefits.map(b => ({id:b.id, tier:b.tier, pid:b.partner_id, what:b.title, group:b.group_key || null, max:b.max_uses || null, url:b.online_url || "", code:b.online_code || ""}));
   DB.uses = uses.map(uFromRow);
   DB.news = news.map(nFromRow);
   const vaMap = Object.fromEntries(vadmin.map(a => [a.volunteer_id, a]));

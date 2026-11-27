@@ -1,7 +1,7 @@
 /* Fabrika 61 – aplikácia pre dobrovoľníkov
    Jeden ES modul bez build kroku. Dáta sú v Supabase, stránka je statická. */
 import { createClient } from "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/+esm";
-import { CFG } from "./config.js?v=39038c58";
+import { CFG } from "./config.js?v=86330bdc";
 
 const sb = createClient(CFG.supabaseUrl, CFG.supabaseKey, {
   auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true, flowType: "implicit" },
@@ -57,7 +57,7 @@ const S = {
   scanVol:null, scanTerm:null, newsKind:"info", newTermType:"shift", draftPhotos:[],
   pushOn:false, pushAsk:false, pushIosHint:false, toast:null, busy:0, tgt:{mode:"all", help:[], when:[]},
   form:null, flt:null, sort:{k:"year", dir:-1}, showFilters:false, exportOpen:false, exportKind:"vols", exportCols:null, copyText:null,
-  voucher:null, pin:"", pinErr:null, lockUntil:{}, justUsed:null, showPins:{}, editPin:null, editTerm:null,
+  voucher:null, pin:"", pinErr:null, lockUntil:{}, justUsed:null, showPins:{}, editPin:null, editTerm:null, editBenefit:null,
 };
 
 /* ---------- data layer: Supabase rows <-> app objects ---------- */
@@ -112,7 +112,7 @@ async function loadData(){
   DB.parts = parts.map(pFromRow);
   const pinMap = Object.fromEntries(pins.map(p => [p.partner_id, p.pin]));
   DB.partners = partners.map(p => ({id:p.id, name:p.name, where:p.place, pin:pinMap[p.id] || ""}));
-  DB.benefits = benefits.map(b => ({id:b.id, tier:b.tier, pid:b.partner_id, what:b.title}));
+  DB.benefits = benefits.map(b => ({id:b.id, tier:b.tier, pid:b.partner_id, what:b.title, group:b.group_key || null, max:b.max_uses || null, url:b.online_url || "", code:b.online_code || ""}));
   DB.uses = uses.map(uFromRow);
   DB.news = news.map(nFromRow);
   const vaMap = Object.fromEntries(vadmin.map(a => [a.volunteer_id, a]));
@@ -234,11 +234,16 @@ function volunteersOfMonth(){
 const genPin = () => String(Math.floor(Math.random() * 10000)).padStart(4, "0");
 const partner = id => DB.partners.find(p => p.id === id);
 const pname = b => partner(b.pid)?.name || "";
-function useOf(vId, bId){ return DB.uses.find(u => u.vId === vId && u.bId === bId && u.year === YEAR); }
+const usesOf = (vId, bId) => DB.uses.filter(u => u.vId === vId && u.bId === bId && u.year === YEAR).sort((a, b) => b.at.localeCompare(a.at));
+function useOf(vId, bId){ return usesOf(vId, bId)[0]; }
+function supersededBy(vId, b){ if (!b.group) return null; const n = yearCount(vId); return DB.benefits.filter(h => h.group === b.group && h.tier > b.tier && n >= THRESH[h.tier]).sort((a, c) => c.tier - a.tier)[0] || null; }
 function benefitState(vId, b){
-  if (useOf(vId, b.id)) return "used";
-  return yearCount(vId) >= THRESH[b.tier] ? "available" : "locked";
+  if (yearCount(vId) < THRESH[b.tier]) return "locked";
+  if (supersededBy(vId, b)) return "superseded";
+  if (b.max && usesOf(vId, b.id).length >= b.max) return "used";
+  return "available";
 }
+const limitText = b => b.url ? "Online zľava s kódom" : b.max ? (b.max === 1 ? "Raz za rok" : `${b.max}× za rok`) : "Opakovane počas roka";
 function progressText(n){
   const t = tierOf(n);
   if (t === 4) return "Máš najvyššiu úroveň. Všetky benefity sú odomknuté.";
@@ -247,9 +252,11 @@ function progressText(n){
   return (t ? `Úroveň ${t}. ` : "") + `Do úrovne ${t + 1} ti ${verb} ${sichty(miss)}.`;
 }
 const avatar = (v, cls = "") => `<span class="avatar ${cls}">${v.photo ? `<img src="${esc(v.photo)}" alt="">` : esc(initials(v))}</span>`;
-function benefitPill(state, u){
-  if (state === "available") return `<span class="pill p-accent">Dostupný voucher</span>`;
-  if (state === "used") return `<span class="pill p-good">${ico("check")} Použité ${fmtNum(D(u.at))} · ${esc(partner(u.pid)?.name || "")}</span>`;
+function benefitPill(state, u, b, vId){
+  const n = b && vId ? usesOf(vId, b.id).length : 0;
+  if (state === "available") return `<span class="pill p-accent">${b?.url ? "Online zľava" : "Dostupné"}</span>${n ? `<span class="pill p-muted">Použité ${n}× tento rok${b.max ? ` · zostáva ${b.max - n}×` : ""}</span>` : ""}`;
+  if (state === "used") return `<span class="pill p-good">${ico("check")} Použité ${fmtNum(D(u.at))}${b?.max > 1 ? ` · ${b.max}× z ${b.max}` : ""}</span>`;
+  if (state === "superseded") return `<span class="pill p-muted">Nahradené vyššou úrovňou</span>`;
   return "";
 }
 function attPill(p){
@@ -399,15 +406,15 @@ function vTerms(m){
 
 function vBenefits(m){
   const n = yearCount(m.id);
-  return `<div class="pagehead"><h1>Benefity</h1><p>Odomykajú sa podľa počtu šichiet v roku ${YEAR}. Počítadlo sa 1. januára vynuluje, celkový počet ti zostáva v profile. Každý benefit môžeš za rok použiť raz. Pri použití ukážeš voucher a pokladník ho potvrdí svojím PINom.</p></div>
+  return `<div class="pagehead"><h1>Benefity</h1><p>Odomykajú sa podľa počtu šichiet v roku ${YEAR} a platia aj na všetkých vyšších úrovniach. Počítadlo sa 1. januára vynuluje, celkový počet ti zostáva v profile. Pri použití ukážeš voucher a pokladník ho potvrdí svojím PINom. Keď dosiahneš vyššiu úroveň, väčšia zľava nahradí tú menšiu.</p></div>
   <div class="stack-lg">${[1,2,3,4].map(tier => {
     const open = n >= THRESH[tier], miss = THRESH[tier] - n, list = DB.benefits.filter(b => b.tier === tier);
     return `<section><div class="tier-head"><h2>Úroveň ${tier}</h2>
       <span class="label">${open ? "Odomknuté" : `Od ${THRESH[tier]} šichiet · ${pl(miss,"chýba","chýbajú","chýba")} ${miss}`}</span></div>
       <div class="list">${list.map(b => {
         const st = benefitState(m.id, b), u = useOf(m.id, b.id);
-        return `<div class="benefit ${st}"><div><div class="partner">${esc(pname(b))}</div><div class="what">${esc(b.what)}</div></div>
-          ${st === "locked" ? "" : `<div class="state">${benefitPill(st, u)}${st === "available" ? `<button class="btn btn-primary btn-xs" data-a="openVoucher" data-v="${b.id}">Použiť</button>` : ""}</div>`}</div>`;
+        return `<div class="benefit ${st === "superseded" ? "locked" : st}"><div><div class="partner">${esc(pname(b))} · ${limitText(b)}</div><div class="what">${esc(b.what)}</div></div>
+          ${st === "locked" ? "" : `<div class="state">${benefitPill(st, u, b, m.id)}${st === "available" ? `<button class="btn btn-primary btn-xs" data-a="openVoucher" data-v="${b.id}">${b.url ? "Zobraziť kód" : "Použiť"}</button>` : ""}</div>`}</div>`;
       }).join("") || `<div class="empty">Na tejto úrovni zatiaľ nie je žiadny benefit.</div>`}</div></section>`;
   }).join("")}</div>`;
 }
@@ -459,7 +466,7 @@ function qrSvg(text){
 /* ---------- voucher sheet ---------- */
 function renderVoucher(){
   const m = me(), b = DB.benefits.find(x => x.id === S.voucher); if (!b) return "";
-  const p = partner(b.pid), lock = (S.lockUntil[b.id] || 0) - Date.now(), u = S.justUsed;
+  const p = partner(b.pid), lock = (S.lockUntil[b.id] || 0) - Date.now(), u = S.justUsed, online = !!b.url;
   const keys = ["1","2","3","4","5","6","7","8","9","","0","del"];
   return `<div class="sheet" role="dialog" aria-modal="true" aria-label="Voucher"><div class="wrap">
     <div class="row between" style="padding-block:16px 8px"><span class="label">Voucher</span><button class="btn btn-ghost btn-sm" data-a="closeVoucher">${u ? "Hotovo" : "Zavrieť"}</button></div>
@@ -473,7 +480,13 @@ function renderVoucher(){
     ${u ? `<div class="stack" style="align-items:center;text-align:center;padding-block:32px">
         <span class="okmark">${ico("check")}</span><h2 style="font-size:24px">Použité</h2>
         <p class="muted">${fmtNum(D(u.at))} o ${u.time} · ${esc(p?.name)}</p>
-        <p class="muted" style="font-size:13px">Záznam je uložený. Voucher sa už nedá použiť znova.</p></div>`
+        <p class="muted" style="font-size:13px">Záznam je uložený. ${b.max && usesOf(m.id, b.id).length >= b.max ? "Tento rok sa už použiť nedá." : "Zľavu môžeš použiť aj nabudúce."}</p></div>`
+    : online ? `<div class="stack" style="align-items:center;text-align:center;padding-block:28px">
+        ${b.code ? `<div class="label">Zľavový kód</div><div class="mono" style="font-size:28px;letter-spacing:.08em;user-select:all">${esc(b.code)}</div>
+          <button class="btn btn-ghost btn-sm" data-a="copy" data-v="${esc(b.code)}">Kopírovať kód</button>`
+          : `<p class="muted">Kód zatiaľ nie je zadaný. Napíš nám a pošleme ti ho.</p>`}
+        <a class="btn btn-primary" href="${esc(b.url)}" target="_blank" rel="noopener">Otvoriť e-shop</a>
+        <p class="muted fs13">Kód zadáš pri objednávke na e-shope.</p></div>`
     : lock > 0 ? `<div class="stack" style="align-items:center;text-align:center;padding-block:32px">
         <h2 style="font-size:20px">Voucher je dočasne zablokovaný</h2>
         <p class="muted">Trikrát nesprávny PIN. Skús znova o <b class="mono num" id="lockcd">${fmtCd(lock)}</b>.</p></div>`
@@ -981,6 +994,7 @@ function aTerms(){
 }
 
 function aPartners(){
+  const eb = S.editBenefit && DB.benefits.find(b => b.id === S.editBenefit);
   const usedYear = DB.uses.filter(u => D(u.at).getFullYear() === YEAR);
   const card = p => {
     const bs = DB.benefits.filter(b => b.pid === p.id), n = usedYear.filter(u => u.pid === p.id).length, shown = S.showPins[p.id];
@@ -996,19 +1010,26 @@ function aPartners(){
              <button class="linkbtn" data-a="newPin" data-v="${p.id}">Vygenerovať nový</button>`}</div>
       <div><div class="label" style="margin:4px 0 2px">Benefity</div>
         ${bs.map(b => { const k = delKey + b.id, cnt = usedYear.filter(u => u.bId === b.id).length;
-          return `<div class="att"><span class="pill p-muted">Ú${b.tier}</span><div class="grow">${esc(b.what)}</div><span class="muted num" style="font-size:13px">${cnt}×</span>
+          return `<div class="att"><span class="pill p-muted">Ú${b.tier}</span><div class="grow">${esc(b.what)}<div class="muted" style="font-size:12px">${limitText(b)}${b.group ? " · vyššia úroveň nahrádza nižšiu" : ""}${b.url && !b.code ? " · chýba zľavový kód" : ""}</div></div><span class="muted num" style="font-size:13px">${cnt}×</span>
+          <button class="btn btn-ghost btn-xs" data-a="editBenefit" data-v="${b.id}">Upraviť</button>
           ${S.confirmDel === k ? `<button class="btn btn-xs" style="background:var(--bad);color:#fff" data-a="delBenefit" data-v="${b.id}">Zmazať</button><button class="btn btn-ghost btn-xs" data-a="cancelDel">Nechať</button>`
             : `<button class="iconbtn" aria-label="Zmazať benefit" data-a="askDel" data-v="${k}">${ico("trash")}</button>`}</div>`; }).join("") || `<p class="empty">Zatiaľ žiadny benefit.</p>`}</div>
     </section>`;
   };
   return `<div class="cols side">
     <div class="stack-lg">
-      <section class="card"><h2 style="font-size:18px;margin-bottom:16px">Nový benefit</h2>
-        <form class="stack" data-f="newBenefit">
-          <div class="field"><label for="nb-pid">Partner</label><select class="input" id="nb-pid" name="pid">${DB.partners.map(p => `<option value="${p.id}">${esc(p.name)}</option>`).join("")}</select></div>
-          <div class="field"><label for="nb-tier">Úroveň</label><select class="input" id="nb-tier" name="tier">${[1,2,3,4].map(t => `<option value="${t}">Úroveň ${t} · od ${THRESH[t]} šichiet</option>`).join("")}</select></div>
-          <div class="field"><label for="nb-what">Čo dobrovoľník dostane</label><input class="input" id="nb-what" name="what" placeholder="Napr. Zľava 15 % na nákup" required></div>
-          <button class="btn btn-primary btn-block" type="submit">Pridať benefit</button>
+      <section class="card" id="benefit-form"><h2 style="font-size:18px;margin-bottom:16px">${eb ? "Upraviť benefit" : "Nový benefit"}</h2>
+        <form class="stack" data-f="${eb ? "editBenefit" : "newBenefit"}">
+          <div class="field"><label for="nb-pid">Partner</label><select class="input" id="nb-pid" name="pid">${DB.partners.map(p => `<option value="${p.id}" ${eb?.pid === p.id ? "selected" : ""}>${esc(p.name)}</option>`).join("")}</select></div>
+          <div class="field"><label for="nb-tier">Úroveň</label><select class="input" id="nb-tier" name="tier">${[1,2,3,4].map(t => `<option value="${t}" ${eb?.tier === t ? "selected" : ""}>Úroveň ${t} · od ${THRESH[t]} šichiet</option>`).join("")}</select></div>
+          <div class="field"><label for="nb-what">Čo dobrovoľník dostane</label><input class="input" id="nb-what" name="what" value="${esc(eb?.what || "")}" placeholder="Napr. Zľava 15 % na nákup" required></div>
+          <div class="field"><label for="nb-max">Koľkokrát za rok</label><select class="input" id="nb-max" name="max">${[["", "Opakovane, bez obmedzenia"], ["1", "Raz za rok"], ["2", "2× za rok"], ["3", "3× za rok"], ["5", "5× za rok"], ["10", "10× za rok"]].map(([v, l]) => `<option value="${v}" ${String(eb?.max || "") === v ? "selected" : ""}>${l}</option>`).join("")}</select></div>
+          ${eb?.group ? `<p class="muted fs13">Tento benefit je súčasťou radu, v ktorom vyššia úroveň nahrádza nižšiu.</p>` : `<div class="field"><label for="nb-up">Je to vyššia verzia iného benefitu?</label><select class="input" id="nb-up" name="upgrade"><option value="">Nie, samostatný benefit</option>${DB.benefits.filter(b => b.id !== eb?.id).map(b => `<option value="${b.id}">Ú${b.tier} · ${esc(pname(b))} · ${esc(b.what)}</option>`).join("")}</select>
+            <span class="muted fs13">Napríklad 30 % zľava, ktorá na vyššej úrovni nahradí 20 %.</span></div>`}
+          <div class="field"><label for="nb-url">Odkaz na e-shop (len pri online zľave)</label><input class="input" id="nb-url" name="url" type="url" value="${esc(eb?.url || "")}" placeholder="https://"></div>
+          <div class="field"><label for="nb-code">Zľavový kód na e-shop</label><input class="input mono" id="nb-code" name="code" value="${esc(eb?.code || "")}" placeholder="Nepovinné"></div>
+          <button class="btn btn-primary btn-block" type="submit">${eb ? "Uložiť benefit" : "Pridať benefit"}</button>
+          ${eb ? `<button class="btn btn-ghost btn-block" type="button" data-a="cancelEditBenefit">Zrušiť úpravu</button>` : ""}
         </form></section>
       <section class="card"><h2 style="font-size:18px;margin-bottom:16px">Nový partner</h2>
         <form class="stack" data-f="newPartner">
@@ -1019,7 +1040,7 @@ function aPartners(){
         </form></section>
     </div>
     <div class="stack">${DB.partners.map(card).join("")}
-      <p class="note">Ako to funguje: dobrovoľník ukáže voucher v aplikácii a pokladník doň zadá PIN. Po troch nesprávnych pokusoch sa voucher na 5 minút zablokuje.</p></div>
+      <p class="note">Ako to funguje: dobrovoľník ukáže voucher v aplikácii a pokladník doň zadá PIN. Každé použitie sa zapíše. Po troch nesprávnych PINoch sa voucher na 5 minút zablokuje. Pri online zľave dobrovoľník uvidí zľavový kód a odkaz na e-shop.</p></div>
   </div>`;
 }
 
@@ -1190,11 +1211,12 @@ const A = {
       try {
         const r = must(await sb.rpc("redeem_voucher", {p_benefit:S.voucher, p_pin:S.pin}));
         S.pin = "";
-        if (r.ok){ await refresh(); S.justUsed = useOf(S.me, S.voucher) || {at:TODAY_ISO, time:new Date().toTimeString().slice(0, 5), pid:DB.benefits.find(b => b.id === S.voucher)?.pid}; }
+        if (r.ok){ await refresh(); S.justUsed = {at:TODAY_ISO, time:new Date().toTimeString().slice(0, 5), pid:DB.benefits.find(b => b.id === S.voucher)?.pid}; }
         else if (r.error === "wrong_pin") S.pinErr = `Nesprávny PIN. ${r.left === 1 ? "Zostáva 1 pokus" : `Zostávajú ${r.left} pokusy`}.`;
         else if (r.error === "locked") S.lockUntil[S.voucher] = new Date(r.locked_until).getTime();
-        else if (r.error === "used"){ await refresh(); S.pinErr = "Tento benefit si už tento rok použil/a."; }
+        else if (r.error === "used"){ await refresh(); S.pinErr = "Tento benefit si už tento rok vyčerpal/a."; }
         else if (r.error === "tier") S.pinErr = "Na tento benefit ešte nemáš dosť šichiet.";
+        else if (r.error === "superseded") S.pinErr = "Máš už vyššiu úroveň. Použi väčšiu zľavu.";
         else S.pinErr = "Voucher sa nepodarilo overiť.";
       } finally { S.pinBusy = false; S.pin = ""; }
     })();
@@ -1235,6 +1257,8 @@ const A = {
   editPin: el => { S.editPin = el.dataset.v || null; },
   newPin: async el => { const p = partner(el.dataset.v), pin = genPin();
     must(await sb.from("partner_pins").upsert({partner_id:p.id, pin})); await refresh(); S.showPins[p.id] = true; toast(`Nový PIN pre ${p.name}: ${pin}`); },
+  editBenefit: el => { S.editBenefit = el.dataset.v; S.formReset = true; S.confirmDel = null; render(); document.getElementById("benefit-form")?.scrollIntoView({block:"start", behavior:"smooth"}); return "skip"; },
+  cancelEditBenefit: () => { S.editBenefit = null; S.formReset = true; },
   delBenefit: async el => { must(await sb.from("benefits").update({active:false}).eq("id", el.dataset.v)); S.confirmDel = null; await refresh(); toast("Benefit odstránený z ponuky"); },
 
   // CRM
@@ -1384,7 +1408,16 @@ async function handleSubmit(kind, fd, f){
       else toast("Príspevok zverejnený");
     }
     if (kind === "setPin"){ const p = partner(S.editPin); must(await sb.from("partner_pins").upsert({partner_id:p.id, pin:fd.pin})); S.editPin = null; S.showPins[p.id] = true; await refresh(); toast(`PIN pre ${p.name} zmenený`); }
-    if (kind === "newBenefit"){ must(await sb.from("benefits").insert({tier:parseInt(fd.tier, 10), partner_id:fd.pid, title:fd.what.trim()})); f.reset(); await refresh(); toast("Benefit pridaný. Dobrovoľníci ho uvidia hneď."); }
+    if (kind === "newBenefit" || kind === "editBenefit"){
+      let group = null;
+      if (fd.upgrade){ const base = DB.benefits.find(b => b.id === fd.upgrade); group = base.group || ("g-" + rid().slice(0, 8));
+        if (!base.group) must(await sb.from("benefits").update({group_key:group}).eq("id", base.id)); }
+      else if (kind === "editBenefit") group = DB.benefits.find(b => b.id === S.editBenefit)?.group || null;
+      const row = {tier:parseInt(fd.tier, 10), partner_id:fd.pid, title:fd.what.trim(), max_uses:fd.max ? parseInt(fd.max, 10) : null,
+        group_key:group, online_url:(fd.url || "").trim() || null, online_code:(fd.code || "").trim() || null};
+      if (kind === "editBenefit"){ must(await sb.from("benefits").update(row).eq("id", S.editBenefit)); S.editBenefit = null; await refresh(); toast("Benefit uložený"); }
+      else { must(await sb.from("benefits").insert(row)); await refresh(); toast("Benefit pridaný. Dobrovoľníci ho uvidia hneď."); }
+    }
     if (kind === "newPartner"){
       const p = must(await sb.from("partners").insert({name:fd.name.trim(), place:(fd.where || "").trim()}).select().single()), pin = genPin();
       must(await sb.from("partner_pins").insert({partner_id:p.id, pin})); f.reset(); await refresh(); S.showPins[p.id] = true; toast(`Partner pridaný. PIN: ${pin}`);
